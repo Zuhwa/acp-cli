@@ -581,13 +581,13 @@ export function registerAgentCommands(program: Command): void {
       let txHash = "";
 
       if (tokenizeDetails.hasPaid) {
-        console.log("\nPayment already received, skipping transfer.");
+        if (!json) console.log("\nPayment already received, skipping transfer.");
       } else {
         const previousWallet = getActiveWallet();
         setActiveWallet(selected.walletAddress);
 
         try {
-          console.log(`Sending payment for tokenization...`);
+          if (!json) console.log(`Sending payment for tokenization...`);
 
           const acpAgent = await createAgentFromConfig();
           const client = acpAgent.getClient();
@@ -626,7 +626,7 @@ export function registerAgentCommands(program: Command): void {
       // Step 5: Call tokenize API
       let tokenizeResponse: TokenizeResponse;
       try {
-        console.log(`Tokenizing your agent on chain ID ${selectedChain.id}...`);
+        if (!json) console.log(`Tokenizing your agent on chain ID ${selectedChain.id}...`);
 
         tokenizeResponse = await agentApi.tokenize(
           selected.id,

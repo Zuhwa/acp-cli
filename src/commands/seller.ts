@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { AssetToken } from "acp-node-v2";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { isJson, outputResult, outputError } from "../lib/output";
+import { getDefaultChainId } from "../lib/defaults";
 
 export function registerSellerCommands(program: Command): void {
   const seller = program
@@ -13,7 +14,7 @@ export function registerSellerCommands(program: Command): void {
     .description("Propose a budget for a job (USDC)")
     .requiredOption("--job-id <id>", "On-chain job ID")
     .requiredOption("--amount <usdc>", "USDC amount to propose")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -48,7 +49,7 @@ export function registerSellerCommands(program: Command): void {
     .requiredOption("--amount <usdc>", "USDC budget amount to propose")
     .requiredOption("--transfer-amount <usdc>", "USDC amount to request transfer")
     .requiredOption("--destination <address>", "Recipient address for the transfer")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -88,7 +89,7 @@ export function registerSellerCommands(program: Command): void {
     .description("Submit a deliverable for a job")
     .requiredOption("--job-id <id>", "On-chain job ID")
     .requiredOption("--deliverable <text>", "Deliverable content or reference")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .option("--transfer-amount <usdc>", "USDC amount to transfer on submit")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);

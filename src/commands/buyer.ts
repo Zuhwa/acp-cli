@@ -3,6 +3,7 @@ import type { AcpAgentOffering } from "acp-node-v2";
 import { AssetToken } from "acp-node-v2";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { isJson, outputResult, outputError } from "../lib/output";
+import { getDefaultChainId } from "../lib/defaults";
 
 export function registerBuyerCommands(program: Command): void {
   const buyer = program
@@ -18,7 +19,7 @@ export function registerBuyerCommands(program: Command): void {
       "Evaluator wallet address (defaults to your own)"
     )
     .requiredOption("--description <text>", "Job description")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .option("--expired-in <seconds>", "Seconds until expiry", "3600")
     .option("--hook <address>", "Hook address")
     .option("--fund-transfer", "Use fund transfer hook (defaults to chain hook address)")
@@ -66,7 +67,7 @@ export function registerBuyerCommands(program: Command): void {
     .description("Fund a job with the agreed budget (USDC)")
     .requiredOption("--job-id <id>", "On-chain job ID")
     .requiredOption("--amount <usdc>", "USDC amount to fund")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -101,7 +102,7 @@ export function registerBuyerCommands(program: Command): void {
     .command("complete")
     .description("Approve and complete a job (as evaluator)")
     .requiredOption("--job-id <id>", "On-chain job ID")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .option("--reason <text>", "Reason for completion", "Approved")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -132,7 +133,7 @@ export function registerBuyerCommands(program: Command): void {
     .command("reject")
     .description("Reject a job or deliverable (as evaluator)")
     .requiredOption("--job-id <id>", "On-chain job ID")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .option("--reason <text>", "Reason for rejection", "Rejected")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -167,7 +168,7 @@ export function registerBuyerCommands(program: Command): void {
     .requiredOption("--provider <address>", "Provider (seller) wallet address")
     .requiredOption("--offering <json>", "Offering JSON object (from browse output)")
     .requiredOption("--requirements <json>", "Requirements JSON matching the offering schema")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .option("--evaluator <address>", "Evaluator wallet address (defaults to your own)")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);

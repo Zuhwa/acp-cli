@@ -8,8 +8,9 @@ import {
   unlinkSync,
   existsSync,
 } from "fs";
-import { createAgentFromConfig } from "../lib/agentFactory";
+import { createAgentFromConfig, getWalletAddress } from "../lib/agentFactory";
 import { isJson, outputResult, outputError } from "../lib/output";
+import { maskAddress } from "../lib/output";
 
 export function registerEventsCommand(program: Command): void {
   const events = program
@@ -47,6 +48,13 @@ export function registerEventsCommand(program: Command): void {
         });
 
         await agent.start();
+
+        const wallet = getWalletAddress();
+        process.stderr.write(`Listening for events... connected.\n`);
+        process.stderr.write(`Agent: ${maskAddress(wallet)}\n`);
+        if (opts.output) {
+          process.stderr.write(`Writing to: ${opts.output}\n`);
+        }
 
         const shutdown = async () => {
           await agent.stop();

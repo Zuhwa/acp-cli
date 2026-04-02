@@ -3,6 +3,7 @@ import { AssetToken } from "acp-node-v2";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { CliError } from "../lib/errors";
+
 export function registerSellerCommands(program: Command): void {
   const seller = program
     .command("seller")

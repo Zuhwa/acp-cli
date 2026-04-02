@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { AssetToken } from "acp-node-v2";
 import { createAgentFromConfig } from "../lib/agentFactory";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 
 export function registerSellerCommands(program: Command): void {
   const seller = program
@@ -27,12 +27,16 @@ export function registerSellerCommands(program: Command): void {
             );
           }
           await session.setBudget(AssetToken.usdc(Number(opts.amount), Number(opts.chainId)));
-          outputResult(json, {
-            success: true,
-            action: "set-budget",
-            jobId: opts.jobId,
-            amount: opts.amount,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "set-budget",
+              jobId: opts.jobId,
+              amount: opts.amount,
+            });
+          } else {
+            console.log(`\nBudget of ${opts.amount} USDC proposed for Job #${opts.jobId}`);
+          }
         } finally {
           await agent.stop();
         }
@@ -67,14 +71,19 @@ export function registerSellerCommands(program: Command): void {
             AssetToken.usdc(Number(opts.transferAmount), chainId),
             opts.destination
           );
-          outputResult(json, {
-            success: true,
-            action: "set-budget-with-fund-request",
-            jobId: opts.jobId,
-            amount: opts.amount,
-            transferAmount: opts.transferAmount,
-            destination: opts.destination,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "set-budget-with-fund-request",
+              jobId: opts.jobId,
+              amount: opts.amount,
+              transferAmount: opts.transferAmount,
+              destination: opts.destination,
+            });
+          } else {
+            console.log(`\nBudget of ${opts.amount} USDC proposed for Job #${opts.jobId}`);
+            console.log(`  Fund transfer: ${opts.transferAmount} USDC → ${maskAddress(opts.destination)}`);
+          }
         } finally {
           await agent.stop();
         }
@@ -105,13 +114,17 @@ export function registerSellerCommands(program: Command): void {
             ? AssetToken.usdc(Number(opts.transferAmount), chainId)
             : undefined;
           await session.submit(opts.deliverable, transferAmount);
-          outputResult(json, {
-            success: true,
-            action: "submit",
-            jobId: opts.jobId,
-            deliverable: opts.deliverable,
-            ...(transferAmount && { transferAmount: opts.transferAmount }),
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "submit",
+              jobId: opts.jobId,
+              deliverable: opts.deliverable,
+              ...(transferAmount && { transferAmount: opts.transferAmount }),
+            });
+          } else {
+            console.log(`\nDeliverable submitted for Job #${opts.jobId}`);
+          }
         } finally {
           await agent.stop();
         }

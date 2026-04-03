@@ -215,7 +215,7 @@ export function registerEventsCommand(program: Command): void {
                   timestamp: Date.now(),
                 },
               });
-              write(line);
+              writeJson(line);
             },
           });
         } catch (err) {

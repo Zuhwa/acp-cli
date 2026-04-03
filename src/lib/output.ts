@@ -37,3 +37,7 @@ export function maskAddress(address: string): string {
     return address;
   }
 }
+
+export function isTTY(): boolean {
+  return process.stdout.isTTY === true;
+}

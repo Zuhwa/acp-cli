@@ -1,6 +1,6 @@
 import * as readline from "readline";
 import type { Command } from "commander";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import type {
   AgentOffering,
   CreateOfferingBody,
@@ -125,9 +125,16 @@ export function registerOfferingCommands(program: Command): void {
           return;
         }
 
-        for (const o of offerings) {
-          printOffering(o);
-          console.log();
+        if (isTTY()) {
+          for (const o of offerings) {
+            printOffering(o);
+            console.log();
+          }
+        } else {
+          console.log("ID\tNAME\tPRICE\tSLA");
+          for (const o of offerings) {
+            console.log(`${o.id}\t${o.name}\t${o.priceValue} (${o.priceType})\t${o.slaMinutes}m`);
+          }
         }
       } catch (err) {
         outputError(

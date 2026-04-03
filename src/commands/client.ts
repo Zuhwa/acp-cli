@@ -9,15 +9,16 @@ import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { registerJob, isLegacyJob, getLegacyJobChainId } from "../lib/config";
 import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
-export function registerBuyerCommands(program: Command): void {
-  const buyer = program
-    .command("buyer")
-    .description("Buyer-side commands (create jobs, fund, complete, reject)");
 
-  buyer
+export function registerClientCommands(program: Command): void {
+  const client = program
+    .command("client")
+    .description("Client-side commands (create jobs, fund, complete, reject)");
+
+  client
     .command("create-job")
     .description("Create a new job on-chain")
-    .requiredOption("--provider <address>", "Provider (seller) wallet address")
+    .requiredOption("--provider <address>", "Provider wallet address")
     .option(
       "--evaluator <address>",
       "Evaluator wallet address (defaults to your own)"
@@ -30,7 +31,7 @@ export function registerBuyerCommands(program: Command): void {
       "--fund-transfer",
       "Use fund transfer hook (defaults to chain hook address)"
     )
-    .option("--legacy", "Target a legacy (openclaw-cli) seller")
+    .option("--legacy", "Target a legacy (openclaw-cli) provider")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -63,8 +64,8 @@ export function registerBuyerCommands(program: Command): void {
         const agent = await createAgentFromConfig();
         await agent.start();
         try {
-          const buyerAddress = await agent.getAddress();
-          const evaluator = opts.evaluator ?? buyerAddress;
+          const clientAddress = await agent.getAddress();
+          const evaluator = opts.evaluator ?? clientAddress;
           const expiredAt =
             Math.floor(Date.now() / 1000) + Number(opts.expiredIn);
           const params = {
@@ -107,7 +108,7 @@ export function registerBuyerCommands(program: Command): void {
       }
     });
 
-  buyer
+  client
     .command("fund")
     .description("Fund a job with the agreed budget (USDC)")
     .requiredOption("--job-id <id>", "On-chain job ID")
@@ -169,7 +170,7 @@ export function registerBuyerCommands(program: Command): void {
       }
     });
 
-  buyer
+  client
     .command("complete")
     .description("Approve and complete a job (as evaluator)")
     .requiredOption("--job-id <id>", "On-chain job ID")
@@ -213,7 +214,7 @@ export function registerBuyerCommands(program: Command): void {
               reason: opts.reason,
             });
           } else {
-            console.log(`\n${c.green(`Job #${opts.jobId} completed`)} — escrow released to seller`);
+            console.log(`\n${c.green(`Job #${opts.jobId} completed`)} — escrow released to provider`);
           }
         } finally {
           await agent.stop();
@@ -223,7 +224,7 @@ export function registerBuyerCommands(program: Command): void {
       }
     });
 
-  buyer
+  client
     .command("reject")
     .description("Reject a job or deliverable (as evaluator)")
     .requiredOption("--job-id <id>", "On-chain job ID")
@@ -267,7 +268,7 @@ export function registerBuyerCommands(program: Command): void {
               reason: opts.reason,
             });
           } else {
-            console.log(`\n${c.red(`Job #${opts.jobId} rejected`)} — escrow returned to buyer`);
+            console.log(`\n${c.red(`Job #${opts.jobId} rejected`)} — escrow returned to client`);
             if (opts.reason !== "Rejected") {
               console.log(`  Reason: ${opts.reason}`);
             }
@@ -280,26 +281,20 @@ export function registerBuyerCommands(program: Command): void {
       }
     });
 
-  buyer
+  client
     .command("create-job-from-offering")
     .description(
       "Create a job from a provider's offering (validates requirements, auto-calculates expiry)"
     )
-    .requiredOption("--provider <address>", "Provider (seller) wallet address")
-    .requiredOption(
-      "--offering <json>",
-      "Offering JSON object (from browse output)"
-    )
-    .requiredOption(
-      "--requirements <json>",
-      "Requirements JSON matching the offering schema"
-    )
+    .requiredOption("--provider <address>", "Provider wallet address")
+    .requiredOption("--offering <json>", "Offering JSON object (from browse output)")
+    .requiredOption("--requirements <json>", "Requirements JSON matching the offering schema")
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
     .option(
       "--evaluator <address>",
       "Evaluator wallet address (defaults to your own)"
     )
-    .option("--legacy", "Target a legacy (openclaw-cli) seller")
+    .option("--legacy", "Target a legacy (openclaw-cli) provider")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {

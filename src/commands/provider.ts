@@ -4,12 +4,13 @@ import { createAgentFromConfig } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
-export function registerSellerCommands(program: Command): void {
-  const seller = program
-    .command("seller")
-    .description("Seller-side commands (set budget, submit deliverable)");
 
-  seller
+export function registerProviderCommands(program: Command): void {
+  const provider = program
+    .command("provider")
+    .description("Provider-side commands (set budget, submit deliverable)");
+
+  provider
     .command("set-budget")
     .description("Propose a budget for a job (USDC)")
     .requiredOption("--job-id <id>", "On-chain job ID")
@@ -48,7 +49,7 @@ export function registerSellerCommands(program: Command): void {
       }
     });
 
-  seller
+  provider
     .command("set-budget-with-fund-request")
     .description("Propose a budget with a fund transfer request (USDC)")
     .requiredOption("--job-id <id>", "On-chain job ID")
@@ -97,7 +98,7 @@ export function registerSellerCommands(program: Command): void {
       }
     });
 
-  seller
+  provider
     .command("submit")
     .description("Submit a deliverable for a job")
     .requiredOption("--job-id <id>", "On-chain job ID")

@@ -1,8 +1,8 @@
 #!/usr/bin/env npx tsx
 import "dotenv/config";
 import { program } from "commander";
-import { registerBuyerCommands } from "../src/commands/buyer";
-import { registerSellerCommands } from "../src/commands/seller";
+import { registerClientCommands } from "../src/commands/client";
+import { registerProviderCommands } from "../src/commands/provider";
 import { registerJobCommands } from "../src/commands/job";
 import { registerEventsCommand } from "../src/commands/events";
 import { registerMessageCommands } from "../src/commands/message";
@@ -16,15 +16,15 @@ import { registerResourceCommands } from "../src/commands/resource";
 program
   .name("acp")
   .version("1.0.0")
-  .description("ACP CLI — Agent Commerce Protocol tool for buyer/seller agents")
+  .description("ACP CLI — Agent Commerce Protocol tool for client/provider agents")
   .option("--json", "Output results as JSON")
   .addHelpText(
     "after",
     "\nGet started:\n  acp configure → acp agent create → acp agent add-signer → acp browse\n"
   );
 
-registerBuyerCommands(program);
-registerSellerCommands(program);
+registerClientCommands(program);
+registerProviderCommands(program);
 registerJobCommands(program);
 registerEventsCommand(program);
 registerMessageCommands(program);

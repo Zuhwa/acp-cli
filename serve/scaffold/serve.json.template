@@ -1,0 +1,6 @@
+{
+  "offeringId": "{{OFFERING_ID}}",
+  "protocols": ["x402", "mpp", "acp"],
+  "evaluator": "default",
+  "port": 3000
+}

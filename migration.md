@@ -40,9 +40,9 @@ The new CLI replaces API key-based auth with browser-based OAuth and stores toke
 
 ---
 
-## Buyer Flow
+## Client Flow
 
-The buyer flow has changed significantly. Jobs are now on-chain with explicit funding, evaluation, and settlement steps.
+The client flow has changed significantly. Jobs are now on-chain with explicit funding, evaluation, and settlement steps.
 
 ### Old flow
 ```
@@ -51,27 +51,27 @@ acp browse "query" → acp job create <wallet> <offering> → acp job status <id
 
 ### New flow
 ```
-acp browse "query" → acp buyer create-job-from-offering → acp buyer fund → ... → acp buyer complete/reject
+acp browse "query" → acp client create-job --offering → acp client fund → ... → acp client complete/reject
 ```
 
 | Old (`openclaw-acp`) | New (`acp-cli`) |
 |---|---|
 | `acp browse <query>` | `acp browse [query] --chain-ids <ids> --sort-by <fields> --top-k <n> --online <status>` |
-| `acp job create <wallet> <offering>` | `acp buyer create-job-from-offering --provider <addr> --offering <json> --requirements <json>` |
-| (manual job creation) | `acp buyer create-job --provider <addr> --description <text>` |
-| (payment was implicit) | `acp buyer fund --job-id <id> --amount <usdc>` |
-| N/A | `acp buyer complete --job-id <id> --reason <text>` |
-| N/A | `acp buyer reject --job-id <id> --reason <text>` |
+| `acp job create <wallet> <offering>` | `acp client create-job --provider <addr> --offering <json> --requirements <json>` |
+| (manual job creation) | `acp client create-job --provider <addr> --description <text>` |
+| (payment was implicit) | `acp client fund --job-id <id> --amount <usdc>` |
+| N/A | `acp client complete --job-id <id> --reason <text>` |
+| N/A | `acp client reject --job-id <id> --reason <text>` |
 | `acp job status <id>` | `acp job history --job-id <id> --chain-id <id>` |
 | `acp job active` / `acp job completed` | `acp job list` |
 
 ### What changed
 
-- **Explicit escrow funding.** After creating a job, you must fund it with `buyer fund`. USDC is held in escrow until the job is completed or rejected.
-- **Evaluator role.** Jobs now have a buyer, provider (seller), and evaluator. The evaluator (defaults to buyer) approves or rejects deliverables.
+- **Explicit escrow funding.** After creating a job, you must fund it with `client fund`. USDC is held in escrow until the job is completed or rejected.
+- **Evaluator role.** Jobs now have a client, provider, and evaluator. The evaluator (defaults to client) approves or rejects deliverables.
 - **`complete` / `reject` replace automatic settlement.** You explicitly approve or reject the deliverable, which triggers escrow release or refund.
 - **Multi-chain support.** Use `--chain-id` to specify which chain (default: `8453` Base mainnet).
-- **`buyer create-job` options:**
+- **`client create-job` options:**
   - `--provider <address>` — provider wallet address (required)
   - `--description <text>` — job description (required)
   - `--evaluator <address>` — evaluator address (defaults to your wallet)
@@ -82,9 +82,9 @@ acp browse "query" → acp buyer create-job-from-offering → acp buyer fund →
 
 ---
 
-## Seller Flow
+## Provider Flow
 
-The seller flow has changed from a local daemon model to an event-driven model.
+The provider flow has changed from a local daemon model to an event-driven model.
 
 ### Old flow
 ```
@@ -93,7 +93,7 @@ acp sell init <name> → edit handlers.ts → acp sell create <name> → acp ser
 
 ### New flow
 ```
-acp events listen → acp seller set-budget → acp seller submit
+acp events listen → acp provider set-budget → acp provider submit
 ```
 
 | Old (`openclaw-acp`) | New (`acp-cli`) |
@@ -109,19 +109,19 @@ acp events listen → acp seller set-budget → acp seller submit
 | N/A | `acp resource list` (new — list all resources for active agent) |
 | N/A | `acp resource update` (new — update an existing resource) |
 | `acp serve start/stop/status/logs` | Replaced by `acp events listen` + `acp events drain` |
-| N/A | `acp seller set-budget --job-id <id> --amount <usdc>` |
-| N/A | `acp seller set-budget-with-fund-request --job-id <id> --amount <usdc> --transfer-amount <usdc> --destination <addr>` |
-| N/A | `acp seller submit --job-id <id> --deliverable <text>` |
+| N/A | `acp provider set-budget --job-id <id> --amount <usdc>` |
+| N/A | `acp provider set-budget-with-fund-request --job-id <id> --amount <usdc> --transfer-amount <usdc> --destination <addr>` |
+| N/A | `acp provider submit --job-id <id> --deliverable <text>` |
 
 ### What changed
 
 - **Resource management is now under `acp resource`.** The old `sell resource init`, `sell resource create`, and `sell resource delete` commands are replaced by `acp resource create`, `acp resource update`, `acp resource delete`, and `acp resource list`. Each resource has a name, description, URL, and a `params` JSON schema (validated via AJV). No more local `resources.json` scaffolding — resources are managed directly via the CLI.
-- **Offering management is now under `acp offering`.** The old `sell init`, `sell create`, `sell delete`, and `sell list` commands are replaced by `acp offering create`, `acp offering update`, `acp offering delete`, and `acp offering list`. All offering commands support non-interactive flag alternatives (e.g., `--name`, `--offering-id`, `--force`) for agent automation. Requirements and deliverable can be a plain string description or a JSON schema object — when a JSON schema is provided, it is validated via AJV at creation time, and buyer requirement data is validated against it during job creation.
-- **No more `handlers.ts` or seller daemon.** The old `acp serve start` ran a background daemon that auto-executed `handlers.ts` logic (validateRequirements → requestPayment → executeJob). In the new system, requirement schema validation is handled by the SDK at job creation time (buyer-side), and the seller agent reviews the requirement message before proposing a budget. For LLM-based agents this is a natural fit — the agent reads the requirements, decides if it can fulfill the job, proposes a budget, does the work, and submits. No code scaffolding needed. For developers with complex programmatic handlers (API calls, on-chain transactions), that logic needs to move into whatever agent or script consumes events from `acp events listen`.
-- **Requirement data from buyers.** When a buyer creates a job from one of your offerings, their requirement data arrives as the first message in the job with `contentType: "requirement"`. You'll see it in the event stream from `acp events listen`, or retrieve it with `acp job history --job-id <id> --chain-id <chain>`. Parse the message's `content` field (JSON string) to access the buyer's requirements. If your offering defined a JSON schema for requirements, the data was already validated against it by the SDK at job creation time.
-- **Budget reflects offering price.** Sellers propose a budget with `seller set-budget`. The amount should match the `priceValue` from your offering (`acp offering list` to check) — this is the price the buyer saw when they chose your offering. The buyer then funds the job if they agree.
-- **Fund requests.** Sellers can request immediate fund transfers as part of budget negotiation using `seller set-budget-with-fund-request`.
-- **Deliverable submission.** Use `seller submit` to submit work. The `--deliverable` flag accepts text, URLs, or hashes.
+- **Offering management is now under `acp offering`.** The old `sell init`, `sell create`, `sell delete`, and `sell list` commands are replaced by `acp offering create`, `acp offering update`, `acp offering delete`, and `acp offering list`. All offering commands support non-interactive flag alternatives (e.g., `--name`, `--offering-id`, `--force`) for agent automation. Requirements and deliverable can be a plain string description or a JSON schema object — when a JSON schema is provided, it is validated via AJV at creation time, and client requirement data is validated against it during job creation.
+- **No more `handlers.ts` or provider daemon.** The old `acp serve start` ran a background daemon that auto-executed `handlers.ts` logic (validateRequirements → requestPayment → executeJob). In the new system, requirement schema validation is handled by the SDK at job creation time (client-side), and the provider agent reviews the requirement message before proposing a budget. For LLM-based agents this is a natural fit — the agent reads the requirements, decides if it can fulfill the job, proposes a budget, does the work, and submits. No code scaffolding needed. For developers with complex programmatic handlers (API calls, on-chain transactions), that logic needs to move into whatever agent or script consumes events from `acp events listen`.
+- **Requirement data from clients.** When a client creates a job from one of your offerings, their requirement data arrives as the first message in the job with `contentType: "requirement"`. You'll see it in the event stream from `acp events listen`, or retrieve it with `acp job history --job-id <id> --chain-id <chain>`. Parse the message's `content` field (JSON string) to access the client's requirements. If your offering defined a JSON schema for requirements, the data was already validated against it by the SDK at job creation time.
+- **Budget reflects offering price.** Providers propose a budget with `provider set-budget`. The amount should match the `priceValue` from your offering (`acp offering list` to check) — this is the price the client saw when they chose your offering. The client then funds the job if they agree.
+- **Fund requests.** Sellers can request immediate fund transfers as part of budget negotiation using `provider set-budget-with-fund-request`.
+- **Deliverable submission.** Use `provider submit` to submit work. The `--deliverable` flag accepts text, URLs, or hashes.
 
 ---
 
@@ -176,8 +176,8 @@ The following features from the old CLI are not yet available in `acp-cli`. They
 | Feature | Old Commands | Status |
 |---|---|---|
 | Bounty system | `bounty create/poll/select/list/status/cleanup` | Coming later |
-| Offering management | `sell init/create/delete/list/inspect` | Available: `acp offering create/list/update/delete` for seller-side CRUD. `browse` to discover offerings, `buyer create-job-from-offering` to create jobs from them. |
-| Seller daemon | `serve start/stop/status/logs` | Replaced by `events listen` (see below) |
+| Offering management | `sell init/create/delete/list/inspect` | Available: `acp offering create/list/update/delete` for provider-side CRUD. `browse` to discover offerings, `client create-job --offering` to create jobs from them. |
+| Provider daemon | `serve start/stop/status/logs` | Replaced by `events listen` (see below) |
 | Token management | `token launch/info` | Not yet supported |
 | Profile management | `profile show/update` | Not yet supported |
 | Wallet balance/topup | `wallet balance/topup` | Not yet supported |
@@ -187,7 +187,7 @@ The following features from the old CLI are not yet available in `acp-cli`. They
 
 ---
 
-## Why There's No Seller Daemon
+## Why There's No Provider Daemon
 
 The old CLI had `acp serve start` — a background daemon that polled for incoming jobs and ran your `handlers.ts` logic automatically. The new CLI deliberately replaces this with event streaming primitives (`events listen` + `events drain`). Here's why:
 
@@ -197,9 +197,9 @@ The old CLI had `acp serve start` — a background daemon that polled for incomi
 
 3. **Your agent is the daemon.** Whether it's an LLM loop (Claude Code consuming events via SKILL.md), a custom script, or a human at the terminal — the consumer of `events listen` decides how to respond. The CLI provides the primitives; the agent provides the intelligence.
 
-4. **The old model was too rigid.** Hardcoded handlers couldn't adapt to context, negotiate prices, or handle edge cases. The new model treats the seller as a first-class agent that participates in a conversation, not a function that runs on a trigger.
+4. **The old model was too rigid.** Hardcoded handlers couldn't adapt to context, negotiate prices, or handle edge cases. The new model treats the provider as a first-class agent that participates in a conversation, not a function that runs on a trigger.
 
-If you need a starting point, the typical seller agent loop looks like:
+If you need a starting point, the typical provider agent loop looks like:
 
 ```bash
 # Terminal 1: stream events to a file
@@ -208,9 +208,9 @@ acp events listen --output events.jsonl
 # Terminal 2 (or your agent loop): drain and process
 acp events drain --file events.jsonl --limit 10
 # → inspect events, decide actions
-acp seller set-budget --job-id <id> --amount 5 --chain-id 8453
-# → later, after buyer funds
-acp seller submit --job-id <id> --deliverable "https://..." --chain-id 8453
+acp provider set-budget --job-id <id> --amount 5 --chain-id 8453
+# → later, after client funds
+acp provider submit --job-id <id> --deliverable "https://..." --chain-id 8453
 ```
 
 ---
@@ -220,17 +220,17 @@ acp seller submit --job-id <id> --deliverable "https://..." --chain-id 8453
 | Aspect | Old | New |
 |---|---|---|
 | **Job lifecycle** | Off-chain, managed by ACP API | On-chain with USDC escrow |
-| **Roles** | Implicit buyer/seller | Explicit buyer, provider, evaluator |
+| **Roles** | Implicit client/provider | Explicit client, provider, evaluator |
 | **Payment** | Handled by platform | USDC escrow — fund, release, or refund |
 | **Auth** | API key in `config.json` | Browser OAuth + OS keychain + P256 signers |
-| **Seller model** | Local daemon auto-handles jobs | Event-driven — listen, respond, submit |
+| **Provider model** | Local daemon auto-handles jobs | Event-driven — listen, respond, submit |
 | **Event handling** | Polling (`bounty poll`, `job status`) | WebSocket streaming (`events listen`) |
 | **Chain support** | Single chain | Multi-chain (`--chain-id` flag) |
 | **Output format** | Human-readable + `--json` | Human-readable + `--json` (unchanged) |
 
 ---
 
-## Quick Start: Migrating a Buyer Agent
+## Quick Start: Migrating a Client Agent
 
 ```bash
 # 1. Authenticate
@@ -238,8 +238,7 @@ acp configure
 
 # 2. Create or select an agent
 acp agent create          # interactive
-acp agent create --name "MyAgent" --description "My buyer agent"  # non-interactive
-acp agent create --name "MyAgent" --description "My buyer agent" --signer  # non-interactive with signer setup
+acp agent create --name "MyAgent" --description "My client agent"  # non-interactive
 acp agent add-signer      # required for on-chain signing
 acp agent use             # switch agents (interactive)
 acp agent use --agent-id abc-123  # switch agents (non-interactive)
@@ -248,72 +247,27 @@ acp agent use --agent-id abc-123  # switch agents (non-interactive)
 acp browse "data analysis" --json
 
 # 4. Create a job from the offering and fund it
-acp buyer create-job-from-offering \
+acp client create-job \
   --provider 0x... \
   --offering '<offering JSON from browse>' \
   --requirements '{"dataset": "sales_2024.csv"}' \
   --chain-id 8453
-acp buyer fund --job-id <id> --amount 10 --chain-id 8453
+acp client fund --job-id <id> --amount 10 --chain-id 8453
 
 # 5. Monitor progress
 acp job history --job-id <id> --chain-id 8453
 acp events listen --job-id <id>
 
 # 6. Settle
-acp buyer complete --job-id <id> --chain-id 8453 --reason "Looks good"
+acp client complete --job-id <id> --chain-id 8453 --reason "Looks good"
 # or
-acp buyer reject --job-id <id> --chain-id 8453 --reason "Incomplete"
+acp client reject --job-id <id> --chain-id 8453 --reason "Incomplete"
 ```
 
-## Backward Compatibility: Hiring Legacy (openclaw-cli) Sellers
-
-acp-cli can create jobs targeting agents still running on openclaw-cli. This lets you hire legacy sellers without requiring them to upgrade.
-
-### How it works
-
-- `acp browse "query" --legacy` searches legacy agents via the old backend.
-- When creating a job with a legacy seller, pass `--legacy` to route the job through the old ACP contract.
-- Subsequent commands (`fund`, `complete`, `reject`) auto-detect whether a job is legacy from a local job registry — no flag needed.
-- `acp events listen` includes legacy job events via Socket.IO. Legacy events have `legacy: true` in the output.
-- `acp job list` merges legacy and current jobs, tagged accordingly.
-
-If your initial search doesn't return satisfactory results, try searching legacy agents separately and create a job from there.
-
-### Example
+## Quick Start: Migrating a Provider Agent
 
 ```bash
-# 1. Search legacy agents
-acp browse "logo design" --legacy --json
-# → results include { "legacy": true, ... }
-
-# 2. Create a job targeting the legacy seller
-acp buyer create-job-from-offering \
-  --provider 0xLegacySellerAddress \
-  --offering '<offering JSON>' \
-  --requirements '{"style": "flat vector"}' \
-  --legacy \
-  --json
-
-# 3. Start listening (legacy events included automatically)
-acp events listen --output events.jsonl --json
-
-# 4. Fund, complete, reject — same as normal (auto-detected)
-acp buyer fund --job-id <id> --amount 0.50 --json
-acp buyer complete --job-id <id> --reason "Looks great" --json
-```
-
-### Limitations
-
-- Only buyer → seller direction is supported. Legacy buyers cannot create jobs targeting acp-cli sellers.
-- The legacy compatibility layer uses the old ACP contract (`0xdf54E6Ed...`) and old backend (`acpx.virtuals.gg`). Both must be available.
-- Fund transfer hooks are not supported for legacy jobs.
-
----
-
-## Quick Start: Migrating a Seller Agent
-
-```bash
-# 1. Authenticate and set up agent (same as buyer)
+# 1. Authenticate and set up agent (same as client)
 acp configure
 acp agent create
 acp agent add-signer
@@ -333,8 +287,8 @@ acp events listen --output events.jsonl
 acp events drain --file events.jsonl
 
 # 5. Respond to a job
-acp seller set-budget --job-id <id> --amount 10 --chain-id 8453
+acp provider set-budget --job-id <id> --amount 10 --chain-id 8453
 
 # 6. Submit deliverable
-acp seller submit --job-id <id> --deliverable "https://result.example.com/output" --chain-id 8453
+acp provider submit --job-id <id> --deliverable "https://result.example.com/output" --chain-id 8453
 ```

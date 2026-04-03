@@ -1,8 +1,8 @@
 import * as readline from "readline";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import { CliError } from "../lib/errors";import type {
-  AgentResource,
+import { CliError } from "../lib/errors";
+import type {  AgentResource,
   CreateResourceBody,
   UpdateResourceBody,
 } from "../lib/api/agent";

@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { CliError } from "./errors";
+import pc from "picocolors";
 
 export function isJson(cmd: Command): boolean {
   return cmd.optsWithGlobals().json === true;
@@ -41,7 +42,7 @@ export function outputError(
     }
     process.stdout.write(JSON.stringify(payload) + "\n");
   } else {
-    console.error(`Error: ${message}`);
+    console.error(pc.red(`Error: ${message}`));
     if (isCliErr && errOrMessage.recovery) {
       console.error(`  ${errOrMessage.recovery}`);
     }

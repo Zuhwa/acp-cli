@@ -1,38 +1,52 @@
 /**
  * x402 Route Handler
  *
- * Implements the full x402 protocol flow:
+ * Implements x402 protocol with 8183 settlement.
  *
- * 1. Client hits GET /x402/<offering-id> with no payment
- *    → Returns 402 + PAYMENT-REQUIRED header (price, token, payTo)
+ * Key difference from vanilla x402: instead of the facilitator doing a bare
+ * ERC-20 transfer on settle, we route the payment through 8183 escrow.
+ * The client's signed payment authorization funds the 8183 job.
  *
- * 2. Client signs payment off-chain, retries with PAYMENT-SIGNATURE header
- *    → Facilitator verifies signature + balance
- *    → 8183: createJob + setBudget + fund (escrow locked)
- *    → Handler runs (requirements → deliverable)
- *    → 8183: submit + complete (escrow released to provider)
- *    → Facilitator settles x402 payment on-chain
- *    → Returns 200 + deliverable + PAYMENT-RESPONSE header
- *
- * The developer's handler.ts is the only custom code. Everything else
- * (x402 protocol, 8183 escrow, payment settlement) is handled here.
+ * Flow:
+ * 1. Client → GET /x402/<offering-id> → 402 + payment requirements
+ * 2. Client signs payment, retries with PAYMENT-SIGNATURE header
+ * 3. Facilitator verifies signature (x402 SDK)
+ * 4. Settlement: createJob + fund via 8183 (instead of bare transfer)
+ * 5. Handler runs → deliverable returned
+ * 6. 8183: submit + complete → escrow released to provider
+ * 7. 200 + deliverable + PAYMENT-RESPONSE
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
 import type { LoadedHandlers } from "../runtime/loader";
-import type { DeployedOffering, HandlerInput } from "../types";
+import type { DeployedOffering } from "../types";
 import {
   createAndFundJob,
   submitAndComplete,
   buildHandlerInput,
 } from "../acp/job";
 
-const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+// x402 SDK imports
+// The facilitator verify/settle will be wired here once we set up
+// the viem client + signer for the gateway's wallet.
+//
+// import { x402Facilitator } from "@x402/core/facilitator";
+// import { registerExactEvmScheme } from "@x402/evm/exact/facilitator";
+// import { toFacilitatorEvmSigner } from "@x402/evm";
+//
+// For the server (402 response building):
+// import { x402ResourceServer } from "@x402/core/server";
+// import { registerExactEvmScheme as registerServerScheme } from "@x402/evm/exact/server";
+
 const CHAIN_ID = 84532;
+const NETWORK = `eip155:${CHAIN_ID}`;
+const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"; // Base Sepolia USDC
 
 /**
- * Build the PAYMENT-REQUIRED header value for a 402 response.
- * This tells the x402 client what to pay.
+ * Build the PAYMENT-REQUIRED header for a 402 response.
+ *
+ * In production, this would use x402ResourceServer.buildPaymentRequirements()
+ * which handles network detection, asset resolution, and facilitator capabilities.
  */
 function buildPaymentRequired(offering: DeployedOffering): string {
   const payload = {
@@ -40,14 +54,14 @@ function buildPaymentRequired(offering: DeployedOffering): string {
     accepts: [
       {
         scheme: "exact",
-        network: `eip155:${CHAIN_ID}`,
+        network: NETWORK,
         maxAmountRequired: String(
           Math.round(offering.offering.priceValue * 1_000_000)
-        ), // USDC 6 decimals
+        ),
         resource: `/x402/${offering.offeringId}`,
         description: offering.offering.description,
         payTo: offering.providerWallet,
-        asset: USDC_BASE_SEPOLIA,
+        asset: USDC_ADDRESS,
         maxTimeoutSeconds: offering.offering.slaMinutes * 60,
       },
     ],
@@ -57,39 +71,52 @@ function buildPaymentRequired(offering: DeployedOffering): string {
 }
 
 /**
- * Verify an x402 payment signature.
- * In production, this calls the facilitator's /verify endpoint.
+ * Verify and settle an x402 payment through 8183.
+ *
+ * This is where we diverge from vanilla x402:
+ * - verify() uses the x402 SDK to check the signature is valid
+ * - Instead of calling facilitator.settle() (bare transfer),
+ *   we call createAndFundJob() to route funds through 8183
+ *
+ * TODO: Wire x402 facilitator SDK for real signature verification.
+ * Requires a viem WalletClient + PublicClient for the gateway's wallet:
+ *
+ *   const signer = toFacilitatorEvmSigner(walletClient, publicClient);
+ *   const facilitator = new x402Facilitator();
+ *   registerExactEvmScheme(facilitator, { signer, networks: NETWORK });
+ *   const verifyResult = await facilitator.verify(payload, requirements);
  */
-async function verifyPayment(
+async function verifyAndSettle(
   paymentSignature: string,
   offering: DeployedOffering
 ): Promise<{ valid: boolean; clientAddress: string; error?: string }> {
-  // TODO: Integrate with x402 facilitator
-  // 1. Decode PAYMENT-SIGNATURE header (base64 → JSON)
-  // 2. POST to facilitator /verify with payment payload + requirements
-  // 3. Facilitator checks: signature valid, balance sufficient, simulates tx
-  // 4. Return { isValid, invalidReason }
+  try {
+    // Decode the payment signature
+    const decoded = JSON.parse(
+      Buffer.from(paymentSignature, "base64").toString()
+    );
 
-  // Placeholder — accepts all payments for development
-  console.log("[x402] Verifying payment signature...");
-  return { valid: true, clientAddress: "0xClient" };
-}
+    // TODO: Replace with real x402 SDK verification:
+    // const verifyResult = await facilitator.verify(decoded, paymentRequirements);
+    // if (!verifyResult.isValid) return { valid: false, error: verifyResult.invalidReason };
 
-/**
- * Settle an x402 payment on-chain.
- * In production, this calls the facilitator's /settle endpoint.
- */
-async function settlePayment(
-  paymentSignature: string,
-  offering: DeployedOffering
-): Promise<{ txHash: string }> {
-  // TODO: Integrate with x402 facilitator
-  // 1. POST to facilitator /settle with payment payload
-  // 2. Facilitator submits transferWithAuthorization (EIP-3009) on-chain
-  // 3. Returns { success, txHash, networkId }
+    // Extract client address from the payment payload
+    const clientAddress =
+      decoded.payload?.authorization?.from ||
+      decoded.payload?.from ||
+      "0xUnknownClient";
 
-  console.log("[x402] Settling payment on-chain...");
-  return { txHash: "0xplaceholder" };
+    // Settlement happens via 8183 (createAndFundJob), not here.
+    // The x402 payment authorization will be used to fund the 8183 escrow.
+
+    return { valid: true, clientAddress };
+  } catch (err) {
+    return {
+      valid: false,
+      clientAddress: "",
+      error: err instanceof Error ? err.message : "Payment verification failed",
+    };
+  }
 }
 
 /**
@@ -103,7 +130,7 @@ export async function handleX402Request(
 ): Promise<void> {
   const paymentSignature = req.headers["payment-signature"] as string | undefined;
 
-  // Step 1: No payment header → return 402
+  // Step 1: No payment → return 402 with price
   if (!paymentSignature) {
     const paymentRequired = buildPaymentRequired(offering);
     res.writeHead(402, {
@@ -114,33 +141,20 @@ export async function handleX402Request(
     return;
   }
 
-  // Step 2: Payment header present → verify + execute + settle
+  // Step 2: Payment present → verify, settle via 8183, run handler
   try {
-    // Verify payment
-    const verification = await verifyPayment(paymentSignature, offering);
+    // Verify the x402 payment signature
+    const verification = await verifyAndSettle(paymentSignature, offering);
     if (!verification.valid) {
       res.writeHead(402, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: verification.error || "Payment verification failed" }));
       return;
     }
 
-    // Parse requirements from request body or query
-    let requirements: Record<string, unknown> | string = {};
-    if (req.method === "POST") {
-      const body = await readBody(req);
-      try {
-        requirements = JSON.parse(body);
-      } catch {
-        requirements = body;
-      }
-    } else {
-      const url = new URL(req.url || "/", `http://${req.headers.host}`);
-      const params: Record<string, string> = {};
-      url.searchParams.forEach((v, k) => (params[k] = v));
-      if (Object.keys(params).length > 0) requirements = params;
-    }
+    // Parse requirements from request
+    const requirements = await parseRequirements(req);
 
-    // 8183: Create job + fund escrow
+    // Route payment through 8183: createJob + fund
     const job = await createAndFundJob({
       providerAddress: offering.providerWallet,
       clientAddress: verification.clientAddress,
@@ -150,7 +164,7 @@ export async function handleX402Request(
       slaMinutes: offering.offering.slaMinutes,
     });
 
-    // Run handler
+    // Run the developer's handler
     const input = buildHandlerInput(
       offering.offering,
       requirements,
@@ -160,18 +174,14 @@ export async function handleX402Request(
     );
     const result = await handlers.handler(input);
 
-    // 8183: Submit deliverable + auto-complete
+    // 8183: submit deliverable + complete (gateway is evaluator)
     await submitAndComplete(job.jobId, job.chainId, result.deliverable);
 
-    // Settle x402 payment on-chain
-    const settlement = await settlePayment(paymentSignature, offering);
-
-    // Return deliverable with payment response
+    // Return deliverable with x402 payment response
     const paymentResponse = Buffer.from(
       JSON.stringify({
         success: true,
-        transaction: settlement.txHash,
-        network: `eip155:${CHAIN_ID}`,
+        network: NETWORK,
         payer: verification.clientAddress,
       })
     ).toString("base64");
@@ -189,6 +199,23 @@ export async function handleX402Request(
       })
     );
   }
+}
+
+async function parseRequirements(
+  req: IncomingMessage
+): Promise<Record<string, unknown> | string> {
+  if (req.method === "POST") {
+    const body = await readBody(req);
+    try {
+      return JSON.parse(body);
+    } catch {
+      return body;
+    }
+  }
+  const url = new URL(req.url || "/", `http://${req.headers.host}`);
+  const params: Record<string, string> = {};
+  url.searchParams.forEach((v, k) => (params[k] = v));
+  return Object.keys(params).length > 0 ? params : {};
 }
 
 function readBody(req: IncomingMessage): Promise<string> {

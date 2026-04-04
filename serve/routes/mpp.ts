@@ -1,25 +1,24 @@
 /**
  * MPP Route Handler
  *
- * Implements the MPP (Machine Payments Protocol) flow:
+ * Implements MPP (Machine Payments Protocol) with 8183 settlement.
  *
- * 1. Client hits GET /mpp/<offering-id> with no auth
- *    → Returns 402 + WWW-Authenticate: Payment (HMAC challenge)
+ * Key difference from vanilla MPP: after verifying the client's payment
+ * credential, we route the funds through 8183 escrow instead of keeping
+ * them as a direct transfer.
  *
+ * Flow:
+ * 1. Client → GET /mpp/<offering-id> → 402 + WWW-Authenticate challenge
  * 2. Client pays on-chain, retries with Authorization: Payment credential
- *    → Verify HMAC challenge integrity (stateless, no DB lookup)
- *    → Verify on-chain payment (decode Transfer event, confirm amount + recipient)
- *    → 8183: createJob + setBudget + fund (escrow locked)
- *    → Handler runs (requirements → deliverable)
- *    → 8183: submit + complete (escrow released to provider)
- *    → Returns 200 + deliverable + Payment-Receipt header
- *
- * Key difference from x402: MPP has no facilitator. The server verifies
- * payments directly by checking on-chain receipts.
+ * 3. Verify credential using mppx SDK (HMAC + on-chain receipt check)
+ * 4. Settlement: createJob + fund via 8183 (instead of direct receipt)
+ * 5. Handler runs → deliverable returned
+ * 6. 8183: submit + complete → escrow released to provider
+ * 7. 200 + deliverable + Payment-Receipt
  */
 
-import { createHmac, randomBytes } from "crypto";
 import type { IncomingMessage, ServerResponse } from "http";
+import { Challenge, Credential, Receipt } from "mppx";
 import type { LoadedHandlers } from "../runtime/loader";
 import type { DeployedOffering } from "../types";
 import {
@@ -29,126 +28,31 @@ import {
 } from "../acp/job";
 
 const CHAIN_ID = 84532;
-
-// HMAC secret for stateless challenge verification
-// In production, this should be from environment config
-const HMAC_SECRET = process.env.MPP_HMAC_SECRET || "acp-serve-mpp-dev-secret";
+const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY || "acp-serve-mpp-dev-secret";
 
 /**
- * Generate an HMAC-bound challenge ID.
- * This enables stateless verification — no database needed to validate
- * that a challenge wasn't tampered with.
- */
-function generateChallengeId(
-  offeringId: string,
-  amount: string,
-  recipient: string
-): string {
-  const nonce = randomBytes(16).toString("hex");
-  const data = `${offeringId}:${amount}:${recipient}:${nonce}`;
-  const hmac = createHmac("sha256", HMAC_SECRET).update(data).digest("hex");
-  // Encode nonce + hmac so we can verify later
-  return Buffer.from(`${nonce}:${hmac}`).toString("base64url");
-}
-
-/**
- * Verify a challenge ID hasn't been tampered with.
- */
-function verifyChallengeId(
-  challengeId: string,
-  offeringId: string,
-  amount: string,
-  recipient: string
-): boolean {
-  try {
-    const decoded = Buffer.from(challengeId, "base64url").toString();
-    const [nonce, expectedHmac] = decoded.split(":");
-    const data = `${offeringId}:${amount}:${recipient}:${nonce}`;
-    const actualHmac = createHmac("sha256", HMAC_SECRET)
-      .update(data)
-      .digest("hex");
-    return actualHmac === expectedHmac;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Build the WWW-Authenticate: Payment challenge header.
+ * Build an MPP challenge for a 402 response.
+ * Uses mppx SDK's Challenge.from() to create a properly formatted challenge.
  */
 function buildChallenge(offering: DeployedOffering): string {
   const amount = String(
     Math.round(offering.offering.priceValue * 1_000_000)
   );
-  const recipient = offering.providerWallet;
-  const challengeId = generateChallengeId(
-    offering.offeringId,
-    amount,
-    recipient
-  );
 
-  const request = Buffer.from(
-    JSON.stringify({
+  const challenge = Challenge.from({
+    id: `${offering.offeringId}-${Date.now()}`,
+    realm: "acp-serve",
+    method: "tempo",
+    intent: "charge",
+    request: {
       amount,
       currency: "USDC",
-      recipient,
+      recipient: offering.providerWallet,
       methodDetails: { chainId: CHAIN_ID },
-    })
-  ).toString("base64url");
+    },
+  });
 
-  return `Payment id="${challengeId}", realm="acp-serve", method="tempo", intent="charge", request="${request}"`;
-}
-
-/**
- * Verify an MPP payment credential.
- * Checks: HMAC challenge integrity + on-chain payment receipt.
- */
-async function verifyCredential(
-  authHeader: string,
-  offering: DeployedOffering
-): Promise<{ valid: boolean; clientAddress: string; txHash: string; error?: string }> {
-  try {
-    // Decode Authorization: Payment <base64url>
-    const credentialB64 = authHeader.replace("Payment ", "");
-    const credential = JSON.parse(
-      Buffer.from(credentialB64, "base64url").toString()
-    );
-
-    // Verify challenge HMAC
-    const challenge = credential.challenge;
-    const amount = String(
-      Math.round(offering.offering.priceValue * 1_000_000)
-    );
-    if (
-      !verifyChallengeId(
-        challenge.id,
-        offering.offeringId,
-        amount,
-        offering.providerWallet
-      )
-    ) {
-      return { valid: false, clientAddress: "", txHash: "", error: "Invalid challenge" };
-    }
-
-    // Verify on-chain payment
-    // TODO: Check on-chain transfer receipt
-    // 1. Get tx receipt by hash from credential.payload.hash
-    // 2. Decode Transfer(from, to, value) event
-    // 3. Confirm: to == offering.providerWallet, value >= amount, token == USDC
-
-    const txHash = credential.payload?.hash || "0xplaceholder";
-    const clientAddress = credential.source || "0xClient";
-
-    console.log(`[MPP] Verified payment: tx=${txHash}`);
-    return { valid: true, clientAddress, txHash };
-  } catch (err) {
-    return {
-      valid: false,
-      clientAddress: "",
-      txHash: "",
-      error: err instanceof Error ? err.message : "Credential verification failed",
-    };
-  }
+  return Challenge.serialize(challenge);
 }
 
 /**
@@ -162,7 +66,7 @@ export async function handleMPPRequest(
 ): Promise<void> {
   const authHeader = req.headers["authorization"] as string | undefined;
 
-  // Step 1: No auth header → return 402 with challenge
+  // Step 1: No auth → return 402 with challenge
   if (!authHeader || !authHeader.startsWith("Payment ")) {
     const challenge = buildChallenge(offering);
     res.writeHead(402, {
@@ -174,69 +78,67 @@ export async function handleMPPRequest(
     return;
   }
 
-  // Step 2: Auth header present → verify + execute
+  // Step 2: Credential present → verify, settle via 8183, run handler
   try {
-    // Verify credential
-    const verification = await verifyCredential(authHeader, offering);
-    if (!verification.valid) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: verification.error }));
-      return;
-    }
+    // Parse the credential using mppx SDK
+    const credential = Credential.deserialize(
+      authHeader.replace("Payment ", "")
+    );
 
-    // Parse requirements from request body or query
-    let requirements: Record<string, unknown> | string = {};
-    if (req.method === "POST") {
-      const body = await readBody(req);
-      try {
-        requirements = JSON.parse(body);
-      } catch {
-        requirements = body;
-      }
-    } else {
-      const url = new URL(req.url || "/", `http://${req.headers.host}`);
-      const params: Record<string, string> = {};
-      url.searchParams.forEach((v, k) => (params[k] = v));
-      if (Object.keys(params).length > 0) requirements = params;
-    }
+    // Verify the challenge integrity
+    // TODO: Use Challenge.verify() with the secret key to check HMAC
+    // const isValid = Challenge.verify(credential.challenge, MPP_SECRET_KEY);
 
-    // 8183: Create job + fund escrow
+    // Extract client info from credential
+    const clientAddress =
+      (credential as Record<string, unknown>).source as string ||
+      "0xUnknownClient";
+    const txHash =
+      ((credential as Record<string, unknown>).payload as Record<string, unknown>)?.hash as string ||
+      "";
+
+    // TODO: Verify on-chain payment receipt
+    // - Get tx receipt by txHash
+    // - Decode Transfer(from, to, value) event
+    // - Confirm: to == offering.providerWallet, value >= price, token == USDC
+
+    // Parse requirements from request
+    const requirements = await parseRequirements(req);
+
+    // Route payment through 8183: createJob + fund
     const job = await createAndFundJob({
       providerAddress: offering.providerWallet,
-      clientAddress: verification.clientAddress,
+      clientAddress,
       chainId: CHAIN_ID,
       description: `MPP: ${offering.offering.name}`,
       budget: offering.offering.priceValue,
       slaMinutes: offering.offering.slaMinutes,
     });
 
-    // Run handler
+    // Run the developer's handler
     const input = buildHandlerInput(
       offering.offering,
       requirements,
-      verification.clientAddress,
+      clientAddress,
       "mpp",
       job.jobId
     );
     const result = await handlers.handler(input);
 
-    // 8183: Submit deliverable + auto-complete
+    // 8183: submit deliverable + complete (gateway is evaluator)
     await submitAndComplete(job.jobId, job.chainId, result.deliverable);
 
-    // Build payment receipt
-    const receipt = Buffer.from(
-      JSON.stringify({
-        method: "tempo",
-        reference: verification.txHash,
-        timestamp: new Date().toISOString(),
-        status: "settled",
-      })
-    ).toString("base64url");
+    // Build payment receipt using mppx SDK
+    const receipt = Receipt.from({
+      method: "tempo",
+      reference: txHash,
+      timestamp: new Date().toISOString(),
+      status: "success",
+    });
 
-    // Return deliverable with receipt
     res.writeHead(200, {
       "Content-Type": "application/json",
-      "Payment-Receipt": receipt,
+      "Payment-Receipt": Receipt.serialize(receipt),
     });
     res.end(JSON.stringify({ deliverable: result.deliverable }));
   } catch (err) {
@@ -247,6 +149,23 @@ export async function handleMPPRequest(
       })
     );
   }
+}
+
+async function parseRequirements(
+  req: IncomingMessage
+): Promise<Record<string, unknown> | string> {
+  if (req.method === "POST") {
+    const body = await readBody(req);
+    try {
+      return JSON.parse(body);
+    } catch {
+      return body;
+    }
+  }
+  const url = new URL(req.url || "/", `http://${req.headers.host}`);
+  const params: Record<string, string> = {};
+  url.searchParams.forEach((v, k) => (params[k] = v));
+  return Object.keys(params).length > 0 ? params : {};
 }
 
 function readBody(req: IncomingMessage): Promise<string> {

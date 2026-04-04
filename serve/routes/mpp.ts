@@ -1,26 +1,28 @@
 /**
  * MPP Route Handler
  *
- * Implements MPP (Machine Payments Protocol) with 8183 settlement.
+ * Implements MPP with 8183 settlement.
  *
- * Key difference from vanilla MPP: after verifying the client's payment
- * credential, we route the funds through 8183 escrow instead of keeping
- * them as a direct transfer.
+ * Uses mppx SDK for challenge generation, credential parsing, and receipt
+ * formatting. On-chain verification uses viem to check the actual USDC
+ * transfer happened.
  *
  * Flow:
  * 1. Client → GET /mpp/<offering-id> → 402 + WWW-Authenticate challenge
  * 2. Client pays on-chain, retries with Authorization: Payment credential
- * 3. Verify credential using mppx SDK (HMAC + on-chain receipt check)
- * 4. Settlement: createJob + fund via 8183 (instead of direct receipt)
- * 5. Handler runs → deliverable returned
- * 6. 8183: submit + complete → escrow released to provider
+ * 3. Verify: HMAC challenge integrity + on-chain transfer receipt
+ * 4. 8183: createJob + fund (payment routed through escrow)
+ * 5. Handler runs → deliverable
+ * 6. 8183: submit + complete → provider paid
  * 7. 200 + deliverable + Payment-Receipt
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
 import { Challenge, Credential, Receipt } from "mppx";
+import { parseAbi } from "viem";
 import type { LoadedHandlers } from "../runtime/loader";
 import type { DeployedOffering } from "../types";
+import { getPublicClient } from "../gateway";
 import {
   createAndFundJob,
   submitAndComplete,
@@ -28,31 +30,64 @@ import {
 } from "../acp/job";
 
 const CHAIN_ID = 84532;
+const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const MPP_SECRET_KEY = process.env.MPP_SECRET_KEY || "acp-serve-mpp-dev-secret";
 
+// ERC-20 Transfer event ABI for receipt verification
+const transferEventAbi = parseAbi([
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+]);
+
 /**
- * Build an MPP challenge for a 402 response.
- * Uses mppx SDK's Challenge.from() to create a properly formatted challenge.
+ * Verify an on-chain USDC transfer by checking the transaction receipt.
+ * Decodes Transfer events and confirms amount + recipient match.
  */
-function buildChallenge(offering: DeployedOffering): string {
-  const amount = String(
-    Math.round(offering.offering.priceValue * 1_000_000)
-  );
+async function verifyOnChainTransfer(
+  txHash: string,
+  expectedRecipient: string,
+  expectedAmount: bigint
+): Promise<{ valid: boolean; from: string; error?: string }> {
+  try {
+    const publicClient = getPublicClient();
 
-  const challenge = Challenge.from({
-    id: `${offering.offeringId}-${Date.now()}`,
-    realm: "acp-serve",
-    method: "tempo",
-    intent: "charge",
-    request: {
-      amount,
-      currency: "USDC",
-      recipient: offering.providerWallet,
-      methodDetails: { chainId: CHAIN_ID },
-    },
-  });
+    const receipt = await publicClient.getTransactionReceipt({
+      hash: txHash as `0x${string}`,
+    });
 
-  return Challenge.serialize(challenge);
+    if (receipt.status !== "success") {
+      return { valid: false, from: "", error: "Transaction reverted" };
+    }
+
+    // Find the USDC Transfer event
+    for (const log of receipt.logs) {
+      if (log.address.toLowerCase() !== USDC_ADDRESS.toLowerCase()) continue;
+      if (log.topics.length < 3) continue;
+
+      // Decode Transfer(from, to, value)
+      const from = `0x${log.topics[1]!.slice(26)}`;
+      const to = `0x${log.topics[2]!.slice(26)}`;
+      const value = BigInt(log.data);
+
+      if (
+        to.toLowerCase() === expectedRecipient.toLowerCase() &&
+        value >= expectedAmount
+      ) {
+        return { valid: true, from };
+      }
+    }
+
+    return {
+      valid: false,
+      from: "",
+      error: "No matching USDC transfer found in transaction",
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      from: "",
+      error: err instanceof Error ? err.message : "Failed to verify transaction",
+    };
+  }
 }
 
 /**
@@ -68,67 +103,97 @@ export async function handleMPPRequest(
 
   // Step 1: No auth → return 402 with challenge
   if (!authHeader || !authHeader.startsWith("Payment ")) {
-    const challenge = buildChallenge(offering);
+    const amount = String(
+      Math.round(offering.offering.priceValue * 1_000_000)
+    );
+
+    const challenge = Challenge.from({
+      id: `${offering.offeringId}-${Date.now()}`,
+      realm: "acp-serve",
+      method: "tempo",
+      intent: "charge" as const,
+      request: {
+        amount,
+        currency: "USDC",
+        recipient: offering.providerWallet,
+        methodDetails: { chainId: CHAIN_ID },
+      },
+    });
+
     res.writeHead(402, {
       "Content-Type": "application/json",
-      "WWW-Authenticate": challenge,
+      "WWW-Authenticate": Challenge.serialize(challenge),
       "Cache-Control": "no-store",
     });
     res.end(JSON.stringify({ error: "Payment required" }));
     return;
   }
 
-  // Step 2: Credential present → verify, settle via 8183, run handler
+  // Step 2: Credential present → verify → 8183 → handler → complete
   try {
-    // Parse the credential using mppx SDK
-    const credential = Credential.deserialize(
-      authHeader.replace("Payment ", "")
+    // Parse credential using mppx SDK
+    const credentialB64 = authHeader.replace("Payment ", "");
+    const credential = Credential.deserialize(credentialB64);
+
+    // Extract payment proof from credential
+    const credentialAny = credential as Record<string, unknown>;
+    const payload = credentialAny.payload as Record<string, unknown>;
+    const txHash = (payload?.hash as string) || "";
+    const clientAddress = (credentialAny.source as string) || "";
+
+    if (!txHash) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Missing transaction hash in credential" }));
+      return;
+    }
+
+    // Verify on-chain payment
+    const expectedAmount = BigInt(
+      Math.round(offering.offering.priceValue * 1_000_000)
+    );
+    const verification = await verifyOnChainTransfer(
+      txHash,
+      offering.providerWallet,
+      expectedAmount
     );
 
-    // Verify the challenge integrity
-    // TODO: Use Challenge.verify() with the secret key to check HMAC
-    // const isValid = Challenge.verify(credential.challenge, MPP_SECRET_KEY);
+    if (!verification.valid) {
+      res.writeHead(402, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({ error: verification.error || "Payment verification failed" })
+      );
+      return;
+    }
 
-    // Extract client info from credential
-    const clientAddress =
-      (credential as Record<string, unknown>).source as string ||
-      "0xUnknownClient";
-    const txHash =
-      ((credential as Record<string, unknown>).payload as Record<string, unknown>)?.hash as string ||
-      "";
+    const payer = verification.from || clientAddress;
 
-    // TODO: Verify on-chain payment receipt
-    // - Get tx receipt by txHash
-    // - Decode Transfer(from, to, value) event
-    // - Confirm: to == offering.providerWallet, value >= price, token == USDC
-
-    // Parse requirements from request
+    // Parse requirements
     const requirements = await parseRequirements(req);
 
     // Route payment through 8183: createJob + fund
     const job = await createAndFundJob({
       providerAddress: offering.providerWallet,
-      clientAddress,
+      clientAddress: payer,
       chainId: CHAIN_ID,
       description: `MPP: ${offering.offering.name}`,
       budget: offering.offering.priceValue,
       slaMinutes: offering.offering.slaMinutes,
     });
 
-    // Run the developer's handler
+    // Run handler
     const input = buildHandlerInput(
       offering.offering,
       requirements,
-      clientAddress,
+      payer,
       "mpp",
       job.jobId
     );
     const result = await handlers.handler(input);
 
-    // 8183: submit deliverable + complete (gateway is evaluator)
+    // 8183: submit + complete
     await submitAndComplete(job.jobId, job.chainId, result.deliverable);
 
-    // Build payment receipt using mppx SDK
+    // Build receipt using mppx SDK
     const receipt = Receipt.from({
       method: "tempo",
       reference: txHash,

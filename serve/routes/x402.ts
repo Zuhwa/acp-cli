@@ -3,120 +3,67 @@
  *
  * Implements x402 protocol with 8183 settlement.
  *
- * Key difference from vanilla x402: instead of the facilitator doing a bare
- * ERC-20 transfer on settle, we route the payment through 8183 escrow.
- * The client's signed payment authorization funds the 8183 job.
+ * The client's signed payment is verified by the x402 SDK (real signature
+ * check, balance check, on-chain simulation). Instead of settling via bare
+ * transfer, the payment is routed through 8183 escrow.
  *
  * Flow:
  * 1. Client → GET /x402/<offering-id> → 402 + payment requirements
  * 2. Client signs payment, retries with PAYMENT-SIGNATURE header
- * 3. Facilitator verifies signature (x402 SDK)
- * 4. Settlement: createJob + fund via 8183 (instead of bare transfer)
- * 5. Handler runs → deliverable returned
- * 6. 8183: submit + complete → escrow released to provider
+ * 3. x402 SDK verifies signature + balance + simulates tx
+ * 4. 8183: createJob + fund (payment routed through escrow)
+ * 5. Handler runs → deliverable
+ * 6. 8183: submit + complete → provider paid
  * 7. 200 + deliverable + PAYMENT-RESPONSE
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
+import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
+// PaymentPayload and PaymentRequirements types from x402
+// Using Record for flexibility since exact types vary by scheme version
 import type { LoadedHandlers } from "../runtime/loader";
 import type { DeployedOffering } from "../types";
+import { getFacilitatorSigner } from "../facilitator/index";
 import {
   createAndFundJob,
   submitAndComplete,
   buildHandlerInput,
 } from "../acp/job";
 
-// x402 SDK imports
-// The facilitator verify/settle will be wired here once we set up
-// the viem client + signer for the gateway's wallet.
-//
-// import { x402Facilitator } from "@x402/core/facilitator";
-// import { registerExactEvmScheme } from "@x402/evm/exact/facilitator";
-// import { toFacilitatorEvmSigner } from "@x402/evm";
-//
-// For the server (402 response building):
-// import { x402ResourceServer } from "@x402/core/server";
-// import { registerExactEvmScheme as registerServerScheme } from "@x402/evm/exact/server";
-
 const CHAIN_ID = 84532;
 const NETWORK = `eip155:${CHAIN_ID}`;
-const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"; // Base Sepolia USDC
+const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
 /**
- * Build the PAYMENT-REQUIRED header for a 402 response.
- *
- * In production, this would use x402ResourceServer.buildPaymentRequirements()
- * which handles network detection, asset resolution, and facilitator capabilities.
+ * Build payment requirements for the 402 response.
  */
-function buildPaymentRequired(offering: DeployedOffering): string {
-  const payload = {
-    x402Version: 2,
-    accepts: [
-      {
-        scheme: "exact",
-        network: NETWORK,
-        maxAmountRequired: String(
-          Math.round(offering.offering.priceValue * 1_000_000)
-        ),
-        resource: `/x402/${offering.offeringId}`,
-        description: offering.offering.description,
-        payTo: offering.providerWallet,
-        asset: USDC_ADDRESS,
-        maxTimeoutSeconds: offering.offering.slaMinutes * 60,
-      },
-    ],
-    error: "Payment required",
+function buildPaymentRequirements(offering: DeployedOffering): Record<string, unknown> {
+  return {
+    scheme: "exact",
+    network: NETWORK,
+    maxAmountRequired: String(
+      Math.round(offering.offering.priceValue * 1_000_000)
+    ),
+    amount: String(Math.round(offering.offering.priceValue * 1_000_000)),
+    resource: `/x402/${offering.offeringId}`,
+    description: offering.offering.description,
+    payTo: offering.providerWallet,
+    asset: USDC_ADDRESS,
+    maxTimeoutSeconds: offering.offering.slaMinutes * 60,
+    extra: {},
   };
-  return Buffer.from(JSON.stringify(payload)).toString("base64");
 }
 
 /**
- * Verify and settle an x402 payment through 8183.
- *
- * This is where we diverge from vanilla x402:
- * - verify() uses the x402 SDK to check the signature is valid
- * - Instead of calling facilitator.settle() (bare transfer),
- *   we call createAndFundJob() to route funds through 8183
- *
- * TODO: Wire x402 facilitator SDK for real signature verification.
- * Requires a viem WalletClient + PublicClient for the gateway's wallet:
- *
- *   const signer = toFacilitatorEvmSigner(walletClient, publicClient);
- *   const facilitator = new x402Facilitator();
- *   registerExactEvmScheme(facilitator, { signer, networks: NETWORK });
- *   const verifyResult = await facilitator.verify(payload, requirements);
+ * Build the PAYMENT-REQUIRED header for the 402 response.
  */
-async function verifyAndSettle(
-  paymentSignature: string,
-  offering: DeployedOffering
-): Promise<{ valid: boolean; clientAddress: string; error?: string }> {
-  try {
-    // Decode the payment signature
-    const decoded = JSON.parse(
-      Buffer.from(paymentSignature, "base64").toString()
-    );
-
-    // TODO: Replace with real x402 SDK verification:
-    // const verifyResult = await facilitator.verify(decoded, paymentRequirements);
-    // if (!verifyResult.isValid) return { valid: false, error: verifyResult.invalidReason };
-
-    // Extract client address from the payment payload
-    const clientAddress =
-      decoded.payload?.authorization?.from ||
-      decoded.payload?.from ||
-      "0xUnknownClient";
-
-    // Settlement happens via 8183 (createAndFundJob), not here.
-    // The x402 payment authorization will be used to fund the 8183 escrow.
-
-    return { valid: true, clientAddress };
-  } catch (err) {
-    return {
-      valid: false,
-      clientAddress: "",
-      error: err instanceof Error ? err.message : "Payment verification failed",
-    };
-  }
+function buildPaymentRequiredHeader(offering: DeployedOffering): string {
+  const payload = {
+    x402Version: 2,
+    accepts: [buildPaymentRequirements(offering)],
+    error: "Payment required",
+  };
+  return Buffer.from(JSON.stringify(payload)).toString("base64");
 }
 
 /**
@@ -130,59 +77,92 @@ export async function handleX402Request(
 ): Promise<void> {
   const paymentSignature = req.headers["payment-signature"] as string | undefined;
 
-  // Step 1: No payment → return 402 with price
+  // Step 1: No payment → return 402
   if (!paymentSignature) {
-    const paymentRequired = buildPaymentRequired(offering);
     res.writeHead(402, {
       "Content-Type": "application/json",
-      "Payment-Required": paymentRequired,
+      "Payment-Required": buildPaymentRequiredHeader(offering),
     });
     res.end(JSON.stringify({ error: "Payment required" }));
     return;
   }
 
-  // Step 2: Payment present → verify, settle via 8183, run handler
+  // Step 2: Payment present → verify → 8183 → handler → complete
   try {
-    // Verify the x402 payment signature
-    const verification = await verifyAndSettle(paymentSignature, offering);
-    if (!verification.valid) {
-      res.writeHead(402, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: verification.error || "Payment verification failed" }));
+    // Decode payment signature
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(
+        Buffer.from(paymentSignature, "base64").toString()
+      );
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid payment signature encoding" }));
       return;
     }
 
+    // Verify using x402 SDK — checks signature, balance, simulates tx
+    const signer = getFacilitatorSigner();
+    const facilitatorScheme = new ExactEvmScheme(signer);
+    const requirements = buildPaymentRequirements(offering);
+    const verifyResult = await facilitatorScheme.verify(payload as any, requirements as any);
+
+    if (!verifyResult.isValid) {
+      res.writeHead(402, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: verifyResult.invalidReason || "Payment verification failed",
+        })
+      );
+      return;
+    }
+
+    // Extract client address from payment payload
+    const payloadAny = payload as Record<string, unknown>;
+    const authPayload = payloadAny.payload as Record<string, unknown>;
+    const clientAddress =
+      (authPayload?.authorization as Record<string, unknown>)?.from as string ||
+      authPayload?.from as string ||
+      "0xUnknownClient";
+
     // Parse requirements from request
-    const requirements = await parseRequirements(req);
+    const requirements_data = await parseRequirements(req);
 
     // Route payment through 8183: createJob + fund
     const job = await createAndFundJob({
       providerAddress: offering.providerWallet,
-      clientAddress: verification.clientAddress,
+      clientAddress,
       chainId: CHAIN_ID,
       description: `x402: ${offering.offering.name}`,
       budget: offering.offering.priceValue,
       slaMinutes: offering.offering.slaMinutes,
     });
 
-    // Run the developer's handler
+    // Run handler
     const input = buildHandlerInput(
       offering.offering,
-      requirements,
-      verification.clientAddress,
+      requirements_data,
+      clientAddress,
       "x402",
       job.jobId
     );
     const result = await handlers.handler(input);
 
-    // 8183: submit deliverable + complete (gateway is evaluator)
+    // 8183: submit + complete
     await submitAndComplete(job.jobId, job.chainId, result.deliverable);
 
-    // Return deliverable with x402 payment response
+    // Settle the x402 payment on-chain (the actual USDC transfer)
+    // This moves the client's funds — the 8183 escrow is funded separately
+    // from the gateway's balance, then replenished by this settlement.
+    const settleResult = await facilitatorScheme.settle(payload as any, requirements as any);
+
+    // Return deliverable with payment response
     const paymentResponse = Buffer.from(
       JSON.stringify({
-        success: true,
+        success: settleResult.success,
+        transaction: settleResult.transaction,
         network: NETWORK,
-        payer: verification.clientAddress,
+        payer: clientAddress,
       })
     ).toString("base64");
 

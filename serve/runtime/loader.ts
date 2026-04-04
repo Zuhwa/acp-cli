@@ -1,36 +1,27 @@
 /**
  * Runtime Loader
  *
- * Loads the developer's handler, validator, and pricer from a serve directory.
- * All are loaded dynamically so optional files (validate.ts, price.ts) are
- * simply skipped if they don't exist.
+ * Loads the developer's handler, validator, and pricer from an offering directory.
+ * Optional files (validate.ts, price.ts) are skipped if they don't exist.
+ *
+ * Directory structure:
+ *   offerings/logo-design/
+ *     handler.ts    — REQUIRED
+ *     validate.ts   — OPTIONAL
+ *     price.ts      — OPTIONAL
  */
 
 import { resolve } from "path";
 import { existsSync } from "fs";
-import type {
-  Handler,
-  Validator,
-  Pricer,
-  ServeConfig,
-} from "../types";
+import type { Handler, Validator, Pricer } from "../types";
 
 export interface LoadedHandlers {
   handler: Handler;
   validator?: Validator;
   pricer?: Pricer;
-  config: ServeConfig;
 }
 
 export async function loadHandlers(dir: string): Promise<LoadedHandlers> {
-  const configPath = resolve(dir, "serve.json");
-  if (!existsSync(configPath)) {
-    throw new Error(`serve.json not found in ${dir}. Run \`acp serve init\` first.`);
-  }
-
-  const configContent = (await import("fs")).readFileSync(configPath, "utf-8");
-  const config = JSON.parse(configContent) as ServeConfig;
-
   // Handler is required
   const handlerPath = resolve(dir, "handler.ts");
   if (!existsSync(handlerPath)) {
@@ -55,5 +46,5 @@ export async function loadHandlers(dir: string): Promise<LoadedHandlers> {
     pricer = priceModule.default;
   }
 
-  return { handler, validator, pricer, config };
+  return { handler, validator, pricer };
 }

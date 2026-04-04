@@ -1,22 +1,19 @@
 /**
  * ACP Job Manager
  *
- * Wraps the ACP SDK (acp-node-v2) to provide a simple interface for
- * creating and managing ERC-8183 jobs. Used by all three protocol paths
- * (x402, MPP, ACP native).
+ * Wraps the ACP SDK (acp-node-v2) to create and manage ERC-8183 jobs.
+ * Used by all three protocol paths (x402, MPP, ACP native).
  *
- * The 8183 lifecycle for a served offering:
- *   createJob → setBudget → fund → [handler runs] → submit → complete
+ * The 8183 lifecycle for x402/MPP (gateway acts as both client AND evaluator):
+ *   createJob(evaluator=gateway) → setBudget → fund → [handler] → submit → complete
  *
- * For x402/MPP: the gateway calls all of these on behalf of client + provider.
- * For ACP native: the client creates/funds, the provider (this runtime) handles
- *   setBudget → submit, and the DefaultEvaluator handles complete.
+ * The gateway is the evaluator so it can call complete() after the handler
+ * returns. The provider can't call complete() — only the evaluator can.
  */
 
+import { AssetToken } from "acp-node-v2";
+import { createAgentFromConfig, getWalletAddress } from "../../src/lib/agentFactory";
 import type { HandlerInput } from "../types";
-
-// Default evaluator address — auto-completes after submit()
-const DEFAULT_EVALUATOR = "0x0000000000000000000000000000000000000000"; // TODO: deploy and set real address
 
 export interface CreateJobParams {
   providerAddress: string;
@@ -24,7 +21,6 @@ export interface CreateJobParams {
   chainId: number;
   description: string;
   budget: number;
-  evaluator?: string;
   slaMinutes: number;
 }
 
@@ -34,56 +30,77 @@ export interface JobResult {
 }
 
 /**
- * Create a full 8183 job lifecycle for an x402/MPP payment.
+ * Create and fund an 8183 job for an x402/MPP payment.
  *
- * This handles the entire flow:
- * 1. createJob (client = gateway, provider = offering owner)
- * 2. setBudget (price from offering or pricer)
- * 3. fund (from the x402/MPP payment)
- * 4. Returns jobId — caller runs handler, then calls submitAndComplete()
+ * The gateway's active agent acts as both the client (creates + funds)
+ * and the evaluator (will call complete after handler returns).
+ *
+ * Flow: createJob → setBudget → fund → return jobId
  */
 export async function createAndFundJob(params: CreateJobParams): Promise<JobResult> {
-  // TODO: Use ACP SDK to:
-  // 1. const agent = await createAgentFromConfig()
-  // 2. await agent.start()
-  // 3. const jobId = await agent.createJob(chainId, {
-  //      providerAddress: params.providerAddress,
-  //      evaluatorAddress: params.evaluator || DEFAULT_EVALUATOR,
-  //      expiredAt: Math.floor(Date.now() / 1000) + params.slaMinutes * 60,
-  //      description: params.description,
-  //    })
-  // 4. await session.setBudget(AssetToken.usdc(params.budget, chainId))
-  // 5. await session.fund(AssetToken.usdc(params.budget, chainId))
+  const agent = await createAgentFromConfig();
+  await agent.start();
 
-  // Placeholder — will be wired to real SDK
-  console.log(`[8183] Creating job: provider=${params.providerAddress}, budget=${params.budget} USDC`);
+  try {
+    // Gateway is the evaluator — so it can call complete() later
+    const gatewayAddress = await agent.getAddress();
+    const expiredAt = Math.floor(Date.now() / 1000) + params.slaMinutes * 60;
 
-  return {
-    jobId: "placeholder-job-id",
-    chainId: params.chainId,
-  };
+    const jobId = await agent.createJob(params.chainId, {
+      providerAddress: params.providerAddress,
+      evaluatorAddress: gatewayAddress,
+      expiredAt,
+      description: params.description,
+    });
+
+    // Get the session to set budget and fund
+    const session = agent.getSession(params.chainId, jobId.toString());
+    if (!session) {
+      throw new Error(`Failed to get session for job ${jobId}`);
+    }
+
+    await session.setBudget(AssetToken.usdc(params.budget, params.chainId));
+    await session.fetchJob();
+    await session.fund(AssetToken.usdc(params.budget, params.chainId));
+
+    return {
+      jobId: jobId.toString(),
+      chainId: params.chainId,
+    };
+  } finally {
+    await agent.stop();
+  }
 }
 
 /**
- * Submit deliverable and trigger completion for an x402/MPP job.
+ * Submit deliverable and complete the job.
  *
- * Called after the handler returns a deliverable.
- * The DefaultEvaluator auto-completes, releasing escrow to the provider.
+ * Called after the handler returns. The gateway calls submit() as the
+ * provider, then complete() as the evaluator (since the gateway set
+ * itself as evaluator at createJob time).
  */
 export async function submitAndComplete(
   jobId: string,
   chainId: number,
   deliverable: string
 ): Promise<void> {
-  // TODO: Use ACP SDK to:
-  // 1. const agent = await createAgentFromConfig()
-  // 2. await agent.start()
-  // 3. const session = agent.getSession(chainId, jobId)
-  // 4. await session.submit(deliverable)
-  // 5. DefaultEvaluator auto-calls complete() — no action needed here
-  //    (or if evaluator = self, call session.complete())
+  const agent = await createAgentFromConfig();
+  await agent.start();
 
-  console.log(`[8183] Job ${jobId}: submitted deliverable, awaiting completion`);
+  try {
+    const session = agent.getSession(chainId, jobId);
+    if (!session) {
+      throw new Error(`No session found for job ${jobId}`);
+    }
+
+    // Submit the deliverable (as provider)
+    await session.submit(deliverable);
+
+    // Complete the job (as evaluator — the gateway set itself as evaluator)
+    await session.complete("Auto-completed by ACP Serve");
+  } finally {
+    await agent.stop();
+  }
 }
 
 /**

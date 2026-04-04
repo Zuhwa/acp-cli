@@ -1,16 +1,15 @@
 /**
  * ACP Serve — Server Entry Point
  *
- * HTTP server that exposes x402 and MPP endpoints for deployed offerings,
+ * HTTP server exposing x402 and MPP endpoints for deployed offerings,
  * backed by ERC-8183 escrow via the ACP SDK.
  *
  * Three protocol paths, same handler, same 8183 settlement:
- *
  *   /x402/<offering-id>  → x402 protocol (facilitator model)
  *   /mpp/<offering-id>   → MPP protocol (direct verification)
  *   ACP native           → event-driven (provider agent loop)
  *
- * Started via `acp serve start --dir ./my-offering/`
+ * Started via `acp serve start`
  */
 
 import { createServer } from "http";
@@ -20,44 +19,46 @@ import { handleMPPRequest } from "./routes/mpp";
 import { startACPProvider } from "./acp/provider";
 import { loadHandlers } from "./runtime/loader";
 import * as registry from "./registry/store";
-import type { DeployedOffering, ServeConfig } from "./types";
+import type { DeployedOffering } from "./types";
 
 export interface ServeOptions {
-  /** Path to the serve directory containing handler.ts + serve.json */
+  /** Path to the offering directory containing handler.ts */
   dir: string;
-  /** Port to listen on (overrides serve.json) */
+  /** Port to listen on */
   port?: number;
   /** Provider wallet address */
   providerWallet: string;
   /** Offering data from ACP API */
   offering: DeployedOffering["offering"];
+  /** Which protocols to enable */
+  protocols?: ("x402" | "mpp" | "acp")[];
 }
 
 export async function startServer(options: ServeOptions): Promise<void> {
   const { dir, providerWallet, offering } = options;
+  const protocols = options.protocols || ["x402", "mpp", "acp"];
+  const port = options.port || 3000;
 
-  // Load developer's handlers
+  // Load developer's handlers from the offering directory
   const handlers = await loadHandlers(dir);
-  const config = handlers.config;
-  const port = options.port || config.port || 3000;
 
   // Build deployed offering entry
   const deployed: DeployedOffering = {
-    offeringId: config.offeringId,
+    offeringId: offering.id,
     providerWallet,
     offering,
     hasValidator: !!handlers.validator,
     hasPricer: !!handlers.pricer,
-    protocols: config.protocols,
-    evaluator: config.evaluator || "default",
+    protocols,
+    evaluator: "gateway", // gateway acts as evaluator for x402/MPP
   };
 
   // Register in local registry
-  registry.register(config.offeringId, deployed, handlers);
+  registry.register(offering.id, deployed, handlers);
 
   // Start ACP native provider if enabled
   let acpProvider: { stop: () => Promise<void> } | undefined;
-  if (config.protocols.includes("acp")) {
+  if (protocols.includes("acp")) {
     acpProvider = await startACPProvider(deployed, handlers);
   }
 
@@ -71,14 +72,9 @@ export async function startServer(options: ServeOptions): Promise<void> {
     if (x402Match) {
       const offeringId = x402Match[1];
       const entry = registry.get(offeringId);
-      if (!entry) {
+      if (!entry || !entry.deployed.protocols.includes("x402")) {
         res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Offering not found" }));
-        return;
-      }
-      if (!entry.deployed.protocols.includes("x402")) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "x402 not enabled for this offering" }));
+        res.end(JSON.stringify({ error: "Offering not found or x402 not enabled" }));
         return;
       }
       await handleX402Request(req, res, entry.deployed, entry.handlers);
@@ -90,14 +86,9 @@ export async function startServer(options: ServeOptions): Promise<void> {
     if (mppMatch) {
       const offeringId = mppMatch[1];
       const entry = registry.get(offeringId);
-      if (!entry) {
+      if (!entry || !entry.deployed.protocols.includes("mpp")) {
         res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Offering not found" }));
-        return;
-      }
-      if (!entry.deployed.protocols.includes("mpp")) {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "MPP not enabled for this offering" }));
+        res.end(JSON.stringify({ error: "Offering not found or MPP not enabled" }));
         return;
       }
       await handleMPPRequest(req, res, entry.deployed, entry.handlers);
@@ -127,16 +118,16 @@ export async function startServer(options: ServeOptions): Promise<void> {
 
   server.listen(port, () => {
     console.log(`\nACP Serve running on port ${port}\n`);
-    console.log(`Offering: ${offering.name} (${config.offeringId})`);
+    console.log(`Offering: ${offering.name} (${offering.id})`);
     console.log(`Provider: ${providerWallet}\n`);
     console.log("Endpoints:");
-    if (config.protocols.includes("x402")) {
-      console.log(`  x402: http://localhost:${port}/x402/${config.offeringId}`);
+    if (protocols.includes("x402")) {
+      console.log(`  x402: http://localhost:${port}/x402/${offering.id}`);
     }
-    if (config.protocols.includes("mpp")) {
-      console.log(`  MPP:  http://localhost:${port}/mpp/${config.offeringId}`);
+    if (protocols.includes("mpp")) {
+      console.log(`  MPP:  http://localhost:${port}/mpp/${offering.id}`);
     }
-    if (config.protocols.includes("acp")) {
+    if (protocols.includes("acp")) {
       console.log(`  ACP:  listening for events (native)`);
     }
     console.log(`\nHealth: http://localhost:${port}/health`);

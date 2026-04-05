@@ -1,0 +1,133 @@
+/**
+ * x402 Middleware
+ *
+ * Wraps a handler with x402 payment gating.
+ * The offering server handles the HTTP protocol (402 responses, headers).
+ * All on-chain work (verification, 8183 settlement) is delegated to our backend.
+ *
+ * Flow:
+ * 1. No payment → 402 + PAYMENT-REQUIRED
+ * 2. Payment present → backend /verify → run handler → backend /settle → 200
+ */
+
+import type { IncomingMessage, ServerResponse } from "http";
+import type { DeployedOffering } from "../../types";
+import type { LoadedHandlers } from "../../runtime/loader";
+import * as backend from "../backend-client";
+import { buildHandlerInput } from "./shared";
+
+const CHAIN_ID = Number(process.env.ACP_CHAIN_ID || "84532");
+const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+
+function buildPaymentRequiredHeader(offering: DeployedOffering): string {
+  const payload = {
+    x402Version: 2,
+    accepts: [
+      {
+        scheme: "exact",
+        network: `eip155:${CHAIN_ID}`,
+        maxAmountRequired: String(
+          Math.round(offering.offering.priceValue * 1_000_000)
+        ),
+        resource: `/x402/${offering.offeringId}`,
+        description: offering.offering.description,
+        payTo: offering.providerWallet,
+        asset: USDC_ADDRESS,
+        maxTimeoutSeconds: offering.offering.slaMinutes * 60,
+      },
+    ],
+    error: "Payment required",
+  };
+  return Buffer.from(JSON.stringify(payload)).toString("base64");
+}
+
+export async function handleX402(
+  req: IncomingMessage,
+  res: ServerResponse,
+  offering: DeployedOffering,
+  handlers: LoadedHandlers
+): Promise<void> {
+  const paymentSignature = req.headers["payment-signature"] as string | undefined;
+
+  // No payment → 402
+  if (!paymentSignature) {
+    res.writeHead(402, {
+      "Content-Type": "application/json",
+      "Payment-Required": buildPaymentRequiredHeader(offering),
+    });
+    res.end(JSON.stringify({ error: "Payment required" }));
+    return;
+  }
+
+  try {
+    // 1. Backend verifies the payment signature
+    const verification = await backend.verify({
+      protocol: "x402",
+      offeringId: offering.offeringId,
+      paymentData: paymentSignature,
+    });
+
+    if (!verification.valid) {
+      res.writeHead(402, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: verification.error || "Payment verification failed" }));
+      return;
+    }
+
+    // 2. Parse requirements and run handler
+    const requirements = await parseRequirements(req);
+    const input = buildHandlerInput(offering, requirements, verification.clientAddress, "x402");
+    const result = await handlers.handler(input);
+
+    // 3. Backend settles — creates 8183 job, funds via hook, submits deliverable, completes
+    const settlement = await backend.settle({
+      protocol: "x402",
+      offeringId: offering.offeringId,
+      providerAddress: offering.providerWallet,
+      clientAddress: verification.clientAddress,
+      paymentData: paymentSignature,
+      deliverable: result.deliverable,
+      description: `x402: ${offering.offering.name}`,
+      budget: offering.offering.priceValue,
+      slaMinutes: offering.offering.slaMinutes,
+    });
+
+    // 4. Return deliverable with payment response
+    const paymentResponse = Buffer.from(
+      JSON.stringify({
+        success: true,
+        network: `eip155:${CHAIN_ID}`,
+        payer: verification.clientAddress,
+        jobId: settlement.jobId,
+      })
+    ).toString("base64");
+
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Payment-Response": paymentResponse,
+    });
+    res.end(JSON.stringify({ deliverable: result.deliverable }));
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }));
+  }
+}
+
+async function parseRequirements(req: IncomingMessage): Promise<Record<string, unknown> | string> {
+  if (req.method === "POST") {
+    const body = await readBody(req);
+    try { return JSON.parse(body); } catch { return body; }
+  }
+  const url = new URL(req.url || "/", `http://${req.headers.host}`);
+  const params: Record<string, string> = {};
+  url.searchParams.forEach((v, k) => (params[k] = v));
+  return Object.keys(params).length > 0 ? params : {};
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}

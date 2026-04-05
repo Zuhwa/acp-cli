@@ -2,13 +2,7 @@
  * Runtime Loader
  *
  * Loads the developer's handler, validator, and pricer from an offering directory.
- * Optional files (validate.ts, price.ts) are skipped if they don't exist.
- *
- * Directory structure:
- *   offerings/logo-design/
- *     handler.ts    — REQUIRED
- *     validate.ts   — OPTIONAL
- *     price.ts      — OPTIONAL
+ * Used by the offering server to run handler.ts on each request.
  */
 
 import { resolve } from "path";
@@ -22,7 +16,6 @@ export interface LoadedHandlers {
 }
 
 export async function loadHandlers(dir: string): Promise<LoadedHandlers> {
-  // Handler is required
   const handlerPath = resolve(dir, "handler.ts");
   if (!existsSync(handlerPath)) {
     throw new Error(`handler.ts not found in ${dir}. This file is required.`);
@@ -30,7 +23,6 @@ export async function loadHandlers(dir: string): Promise<LoadedHandlers> {
   const handlerModule = await import(handlerPath);
   const handler: Handler = handlerModule.default;
 
-  // Validator is optional
   let validator: Validator | undefined;
   const validatePath = resolve(dir, "validate.ts");
   if (existsSync(validatePath)) {
@@ -38,7 +30,6 @@ export async function loadHandlers(dir: string): Promise<LoadedHandlers> {
     validator = validateModule.default;
   }
 
-  // Pricer is optional
   let pricer: Pricer | undefined;
   const pricePath = resolve(dir, "price.ts");
   if (existsSync(pricePath)) {

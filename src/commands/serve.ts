@@ -168,7 +168,7 @@ export function registerServeCommands(program: Command): void {
         const agentData = await agentApi.getById(agentId);
 
         // Build server options for each offering
-        const { startServer } = await import("../../serve/index");
+        const { startOfferingServer } = await import("../../serve/server/index");
 
         for (const [offeringId, entry] of Object.entries(offeringEntries)) {
           const offering = agentData.offerings?.find((o) => o.id === offeringId);
@@ -177,7 +177,7 @@ export function registerServeCommands(program: Command): void {
             continue;
           }
 
-          await startServer({
+          await startOfferingServer({
             dir: resolve(rootDir, entry.dir),
             port: opts.port ? Number(opts.port) : serveConfig.port,
             providerWallet: wallet,

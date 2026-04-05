@@ -78,9 +78,16 @@ Each offering gets one self-contained server with four distinct internal roles:
 │  ┌────────────────────────────────────────────────────┐      │
 │  │  PROVIDER RUNTIME (handler execution)               │      │
 │  │                                                     │      │
-│  │  - Loads handler.ts (+ validate.ts, price.ts)       │      │
-│  │  - All three protocols call the same handler        │      │
-│  │  - requirements in → deliverable out                │      │
+│  │  x402/MPP: handler.ts only                          │      │
+│  │    Simple request → response. Fixed offering price. │      │
+│  │                                                     │      │
+│  │  ACP native: full lifecycle                         │      │
+│  │    validate.ts → accept/reject job (optional)       │      │
+│  │    price.ts → dynamic pricing (optional)            │      │
+│  │    handler.ts → do the work (required)              │      │
+│  │                                                     │      │
+│  │  All three protocols share the same handler.ts.     │      │
+│  │  validate.ts and price.ts are ACP native only.      │      │
 │  └────────────────────┬───────────────────────────────┘      │
 │                       │ deliverable returned                  │
 │                       ▼                                       │

@@ -309,33 +309,33 @@ export function registerServeCommands(program: Command): void {
           // Generate deploy signer
           // Uses the same add-signer flow as `acp agent add-signer`
           const { generateP256KeyPair } = await import("@privy-io/node");
+          const { storeSignerKey } = await import("../../src/lib/signerKeychain");
 
           const keypair = await generateP256KeyPair();
           const deployPublicKey = keypair.publicKey;
           const deployPrivateKey = keypair.privateKey;
 
-          // Register the signer on the agent
-          let keyQuorumId: string;
+          // Store signer key in keychain
+          await storeSignerKey(deployPublicKey, deployPrivateKey);
+
+          // Register the signer via URL-based flow (requires user approval)
+          let signerUrl: string;
           try {
-            const quorumRes = await agentApi.addQuorum(agentData.id, deployPublicKey);
-            keyQuorumId = quorumRes.data;
+            const res = await agentApi.addSignerWithUrl(agentData.id);
+            signerUrl = `${res.data.url}&publicKey=${deployPublicKey}`;
           } catch (err) {
-            outputError(json, `Failed to add deploy signer: ${err instanceof Error ? err.message : String(err)}`);
+            outputError(json, `Failed to initiate deploy signer: ${err instanceof Error ? err.message : String(err)}`);
             return;
           }
 
-          const walletId = agentData.walletProviders[0]?.metadata?.walletId;
-          if (!walletId) {
-            outputError(json, "Wallet ID not found on agent.");
-            return;
+          if (!json) {
+            console.log(`\nApprove the deploy signer in your browser:`);
+            console.log(`  ${signerUrl}\n`);
+            console.log("Waiting for approval...");
           }
 
-          try {
-            await agentApi.addSigner(agentData.id, walletId, keyQuorumId);
-          } catch (err) {
-            outputError(json, `Failed to register deploy signer: ${err instanceof Error ? err.message : String(err)}`);
-            return;
-          }
+          // TODO: Poll for approval completion (same pattern as acp agent add-signer)
+          // For now, output the URL for manual approval
 
           // Read handler code
           const handlerDir = resolve(rootDir, entry.dir);

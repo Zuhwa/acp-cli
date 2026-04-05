@@ -25,6 +25,10 @@ export interface ServerOptions {
   providerWallet: string;
   offering: DeployedOffering["offering"];
   protocols?: ("x402" | "mpp" | "acp")[];
+  /** If true, run handlers in a sandboxed worker thread (no env access).
+   *  Enabled automatically for hosted deployments to prevent handlers
+   *  from accessing the deploy signer key. */
+  sandbox?: boolean;
 }
 
 export async function startOfferingServer(options: ServerOptions): Promise<void> {
@@ -32,7 +36,25 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
   const protocols = options.protocols || ["x402", "mpp", "acp"];
   const port = options.port || 3000;
 
-  const handlers = await loadHandlers(dir);
+  let handlers = await loadHandlers(dir);
+
+  // In sandbox mode, wrap the handler to run in an isolated worker thread.
+  // The worker has NO access to process.env (no signer keys).
+  // Enabled for hosted deployments to prevent handler code from stealing keys.
+  if (options.sandbox) {
+    const { runInSandbox } = await import("../runtime/sandbox");
+    const { resolve } = await import("path");
+    const handlerPath = resolve(dir, "handler.ts");
+    const timeoutMs = (offering.slaMinutes || 5) * 60 * 1000;
+
+    const originalHandler = handlers.handler;
+    handlers = {
+      ...handlers,
+      handler: async (input) => {
+        return runInSandbox(handlerPath, input, timeoutMs);
+      },
+    };
+  }
 
   const deployed: DeployedOffering = {
     offeringId: offering.id,
@@ -44,7 +66,25 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
     evaluator: "self",
   };
 
+  // Replay protection — track processed payment signatures
+  const processedPayments = new Set<string>();
+
   const app = new Hono();
+
+  // Middleware: check for replay attacks
+  app.use("*", async (c, next) => {
+    const paymentSig = c.req.header("payment-signature") || c.req.header("authorization");
+    if (paymentSig && processedPayments.has(paymentSig)) {
+      return c.json({ error: "Payment already processed" }, 409);
+    }
+    await next();
+    // Mark as processed after successful response
+    if (paymentSig && c.res.status === 200) {
+      processedPayments.add(paymentSig);
+      // Prevent memory leak — evict old entries after 10 minutes
+      setTimeout(() => processedPayments.delete(paymentSig), 10 * 60 * 1000);
+    }
+  });
 
   // x402 endpoint
   if (protocols.includes("x402")) {

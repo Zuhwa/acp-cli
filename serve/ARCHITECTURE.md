@@ -51,15 +51,29 @@ Each offering gets one self-contained server with four distinct internal roles:
 │                       │ payment received                      │
 │                       ▼                                       │
 │  ┌────────────────────────────────────────────────────┐      │
-│  │  FACILITATOR (payment verification)                 │      │
+│  │  FACILITATOR (payment verification + settlement)    │      │
 │  │                                                     │      │
-│  │  x402: verify EIP-3009 signature + balance          │      │
-│  │        (@x402/evm SDK)                              │      │
-│  │  MPP:  verify on-chain receipt or signed tx         │      │
-│  │        (mppx SDK + viem)                            │      │
-│  │  ACP:  no verification needed (SDK handles it)      │      │
+│  │  Embedded in-process — NOT a separate service.      │      │
+│  │  The x402 SDK supports local facilitators via the   │      │
+│  │  FacilitatorClient interface. No facilitator URL     │      │
+│  │  is exposed to clients. Client only sees the server.│      │
+│  │                                                     │      │
+│  │  Verify:                                            │      │
+│  │    x402: verify EIP-3009 signature + balance        │      │
+│  │          (x402Facilitator + ExactEvmScheme)          │      │
+│  │    MPP:  verify on-chain receipt or signed tx       │      │
+│  │          (mppx SDK + viem)                          │      │
+│  │    ACP:  no verification needed (SDK handles it)    │      │
+│  │                                                     │      │
+│  │  Settle (on behalf of client):                      │      │
+│  │    1. createJob — on behalf of client               │      │
+│  │       (ERC-2771 forwarding preserves real address)  │      │
+│  │    2. setBudget — offering price                    │      │
+│  │    3. fund — PaymentHook executes client's signed   │      │
+│  │       authorization, USDC goes client → escrow      │      │
+│  │                                                     │      │
 │  └────────────────────┬───────────────────────────────┘      │
-│                       │ payment verified                      │
+│                       │ payment verified + escrow funded      │
 │                       ▼                                       │
 │  ┌────────────────────────────────────────────────────┐      │
 │  │  PROVIDER RUNTIME (handler execution)               │      │
@@ -71,12 +85,10 @@ Each offering gets one self-contained server with four distinct internal roles:
 │                       │ deliverable returned                  │
 │                       ▼                                       │
 │  ┌────────────────────────────────────────────────────┐      │
-│  │  8183 ORCHESTRATOR (on-chain settlement)            │      │
+│  │  SUBMIT (on behalf of provider)                     │      │
 │  │                                                     │      │
-│  │  1. createJob (client + provider addresses logged)  │      │
-│  │  2. setBudget (offering price)                      │      │
-│  │  3. fund (PaymentHook: client → escrow directly)    │      │
-│  │  4. submit (deliverable hash)                       │      │
+│  │  4. submit(deliverable) — on behalf of provider     │      │
+│  │     (ERC-2771 preserves provider's real address)    │      │
 │  │  5. DefaultEvaluator contract auto-completes →      │      │
 │  │     escrow released to provider                     │      │
 │  │                                                     │      │
@@ -118,9 +130,22 @@ Each offering gets one self-contained server with four distinct internal roles:
 
 ### Why one unit, not two services?
 
-The x402 facilitator and MPP verifier are **library code** — `@x402/evm` SDK and `mppx` SDK. They don't need to be separate services. The offering server embeds them and calls them directly.
+**The x402 facilitator does NOT need to be a separate service.** The x402 SDK provides two implementations:
+- `HTTPFacilitatorClient` — calls a remote facilitator via HTTP (for when it's a separate service)
+- `x402Facilitator` class — runs locally in-process (for embedded facilitators)
 
-The 8183 settlement uses the **ACP SDK** (`acp-node-v2`) — same library the CLI uses. The deploy signer gives the server signing authority. Gas is sponsored via Privy.
+The `x402ResourceServer` accepts either via the `FacilitatorClient` interface. We use the local `x402Facilitator`. The client never knows — it only talks to the resource server. The 402 response contains no facilitator URL.
+
+**MPP has no facilitator at all** by design — the server verifies payments directly.
+
+**8183 settlement** uses the ACP SDK (`acp-node-v2`) — same library the CLI uses. The deploy signer provides signing authority. Gas is sponsored.
+
+The facilitator acts **on behalf of both parties**:
+- On behalf of the **client**: calls `createJob()` and `fund()` (routes the client's signed payment to escrow via the PaymentHook)
+- On behalf of the **provider**: calls `submit()` (after the handler returns a deliverable)
+- The **DefaultEvaluator contract** handles `complete()` — neither the facilitator nor either party needs to call it
+
+ERC-2771 meta-transaction forwarding preserves the real client and provider wallet addresses on-chain, even though the facilitator submits the transactions.
 
 No separate backend, no separate facilitator service. Everything in one encrypted, deployable package.
 

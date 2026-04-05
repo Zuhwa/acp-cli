@@ -13,6 +13,7 @@
   "license": "ISC",
   "description": "CLI tool wrapping the ACP Node SDK for agent tool use",
   "dependencies": {
+    "@hono/node-server": "^1.19.12",
     "@privy-io/node": "^0.11.0",
     "@x402/core": "^2.9.0",
     "@x402/evm": "^2.9.0",
@@ -21,6 +22,7 @@
     "commander": "^13.0.0",
     "cross-keychain": "^1.1.0",
     "dotenv": "^17.0.0",
+    "hono": "^4.12.10",
     "mppx": "^0.5.5",
     "socket.io-client": "^4.8.3",
     "viem": "^2.47.6"

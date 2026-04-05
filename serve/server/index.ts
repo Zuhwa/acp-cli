@@ -1,26 +1,23 @@
 /**
- * Offering Server
+ * Offering Server (Hono)
  *
- * Self-contained server deployed per offering. Handles everything:
- * - x402 protocol (embedded facilitator: verify + settle via 8183)
- * - MPP protocol (embedded verifier: on-chain receipt + settle via 8183)
- * - ACP native (event listener + handler + submit via SDK)
- * - Handler runtime (developer's handler.ts)
- * - ERC-8183 settlement (via ACP SDK + deploy signer)
+ * Self-contained server deployed per offering.
+ * Hono framework — works on Node.js (local), Cloudflare Workers (hosted), Deno, Bun.
  *
- * No separate backend needed. All logic — facilitator, verification,
- * settlement, handler — runs in one process.
+ * Routes:
+ *   GET /x402/:offeringId  — x402 payment endpoint
+ *   GET /mpp/:offeringId   — MPP payment endpoint
+ *   GET /health            — health check
  *
- * Deployed as an encrypted package via `acp serve deploy`.
- * Or run locally via `acp serve start`.
+ * ACP native runs as a background event listener in the same process.
  */
 
-import { createServer } from "http";
-import type { IncomingMessage, ServerResponse } from "http";
-import { handleX402 } from "./middleware/x402";
-import { handleMPP } from "./middleware/mpp";
-import { loadHandlers } from "../runtime/loader";
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { loadHandlers, type LoadedHandlers } from "../runtime/loader";
 import type { DeployedOffering } from "../types";
+import { x402Middleware } from "./middleware/x402";
+import { mppMiddleware } from "./middleware/mpp";
 
 export interface ServerOptions {
   dir: string;
@@ -47,43 +44,49 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
     evaluator: "self",
   };
 
-  // ACP native: listen for events via SDK
+  const app = new Hono();
+
+  // x402 endpoint
+  if (protocols.includes("x402")) {
+    app.all(`/x402/${offering.id}`, x402Middleware(deployed, handlers));
+  }
+
+  // MPP endpoint
+  if (protocols.includes("mpp")) {
+    app.all(`/mpp/${offering.id}`, mppMiddleware(deployed, handlers));
+  }
+
+  // Health check
+  app.get("/health", (c) =>
+    c.json({
+      status: "ok",
+      offering: { id: offering.id, name: offering.name },
+      protocols,
+      pid: process.pid,
+    })
+  );
+
+  // 404
+  app.all("*", (c) => c.json({ error: "Not found" }, 404));
+
+  // Start ACP native listener
   if (protocols.includes("acp")) {
     startACPListener(deployed, handlers);
   }
 
-  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    const url = new URL(req.url || "/", `http://${req.headers.host}`);
-    const path = url.pathname;
+  // Write PID file for serve stop/status
+  const pidFile = getPidFilePath(offering.id);
+  const { writeFileSync, mkdirSync } = await import("fs");
+  const { dirname } = await import("path");
+  mkdirSync(dirname(pidFile), { recursive: true });
+  writeFileSync(pidFile, String(process.pid));
 
-    if (path === `/x402/${offering.id}` && protocols.includes("x402")) {
-      await handleX402(req, res, deployed, handlers);
-      return;
-    }
-
-    if (path === `/mpp/${offering.id}` && protocols.includes("mpp")) {
-      await handleMPP(req, res, deployed, handlers);
-      return;
-    }
-
-    if (path === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({
-        status: "ok",
-        offering: { id: offering.id, name: offering.name },
-        protocols,
-      }));
-      return;
-    }
-
-    res.writeHead(404, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "Not found" }));
-  });
-
-  server.listen(port, () => {
+  // Start HTTP server
+  serve({ fetch: app.fetch, port }, () => {
     console.log(`\nACP Serve running on port ${port}\n`);
     console.log(`Offering: ${offering.name} (${offering.id})`);
-    console.log(`Provider: ${providerWallet}\n`);
+    console.log(`Provider: ${providerWallet}`);
+    console.log(`PID: ${process.pid}\n`);
     console.log("Endpoints:");
     if (protocols.includes("x402")) {
       console.log(`  x402: http://localhost:${port}/x402/${offering.id}`);
@@ -97,9 +100,13 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
     console.log(`\nHealth: http://localhost:${port}/health`);
   });
 
+  // Cleanup on shutdown
   const shutdown = async () => {
     console.log("\nShutting down...");
-    server.close();
+    try {
+      const { unlinkSync } = await import("fs");
+      unlinkSync(pidFile);
+    } catch {}
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
@@ -108,10 +115,16 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
 
 function startACPListener(
   offering: DeployedOffering,
-  handlers: ReturnType<typeof loadHandlers> extends Promise<infer T> ? T : never
+  handlers: LoadedHandlers
 ): void {
-  // TODO: Use ACP SDK event listener
-  // agent.on("entry") → run validate → price → handler → submit
-  // Same flow as before, using deploy signer via createAgentFromConfig()
+  // TODO: Wire ACP SDK event listener
+  // agent.on("entry") → validate → price → handler → submit
   console.log(`[ACP] Listening for native jobs: ${offering.offering.name}`);
+}
+
+/** PID file path for a given offering — used by stop/status commands */
+export function getPidFilePath(offeringId: string): string {
+  const { resolve } = require("path");
+  const { homedir } = require("os");
+  return resolve(homedir(), ".acp", "serve", `${offeringId}.pid`);
 }

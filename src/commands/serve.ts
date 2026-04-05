@@ -403,4 +403,147 @@ export function registerServeCommands(program: Command): void {
         outputError(json, err instanceof Error ? err.message : String(err));
       }
     });
+
+  // STOP — stop a running local offering server
+  serve
+    .command("stop")
+    .description("Stop a running local offering server")
+    .option("--dir <path>", "Project root directory", ".")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+
+      try {
+        const rootDir = resolve(opts.dir);
+        const serveJsonPath = resolve(rootDir, "serve.json");
+        if (!existsSync(serveJsonPath)) {
+          outputError(json, `serve.json not found in ${rootDir}.`);
+          return;
+        }
+
+        const serveConfig = JSON.parse(readFileSync(serveJsonPath, "utf-8"));
+        const offeringEntries = serveConfig.offerings as Record<string, unknown>;
+        let stopped = 0;
+
+        const { getPidFilePath } = await import("../../serve/server/index");
+
+        for (const offeringId of Object.keys(offeringEntries)) {
+          const pidFile = getPidFilePath(offeringId);
+          if (!existsSync(pidFile)) continue;
+
+          const pid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
+          try {
+            process.kill(pid, "SIGTERM");
+            try { const { unlinkSync } = require("fs"); unlinkSync(pidFile); } catch {}
+            stopped++;
+            if (!json) console.log(`Stopped offering ${offeringId} (PID ${pid})`);
+          } catch {
+            // Process already dead, clean up PID file
+            try { const { unlinkSync } = require("fs"); unlinkSync(pidFile); } catch {}
+          }
+        }
+
+        if (json) {
+          outputResult(json, { success: true, stopped });
+        } else if (stopped === 0) {
+          console.log("No running offerings found.");
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err.message : String(err));
+      }
+    });
+
+  // STATUS — check if offering servers are running
+  serve
+    .command("status")
+    .description("Check whether local offering servers are running")
+    .option("--dir <path>", "Project root directory", ".")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+
+      try {
+        const rootDir = resolve(opts.dir);
+        const serveJsonPath = resolve(rootDir, "serve.json");
+        if (!existsSync(serveJsonPath)) {
+          outputError(json, `serve.json not found in ${rootDir}.`);
+          return;
+        }
+
+        const serveConfig = JSON.parse(readFileSync(serveJsonPath, "utf-8"));
+        const offeringEntries = serveConfig.offerings as Record<string, unknown>;
+        const statuses: Record<string, { running: boolean; pid?: number }> = {};
+
+        const { getPidFilePath } = await import("../../serve/server/index");
+
+        for (const offeringId of Object.keys(offeringEntries)) {
+          const pidFile = getPidFilePath(offeringId);
+          if (!existsSync(pidFile)) {
+            statuses[offeringId] = { running: false };
+            continue;
+          }
+
+          const pid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
+          try {
+            // signal 0 checks if process exists without killing it
+            process.kill(pid, 0);
+            statuses[offeringId] = { running: true, pid };
+          } catch {
+            // Process is dead, clean up stale PID file
+            try { const { unlinkSync } = require("fs"); unlinkSync(pidFile); } catch {}
+            statuses[offeringId] = { running: false };
+          }
+        }
+
+        if (json) {
+          outputResult(json, { offerings: statuses });
+        } else {
+          for (const [id, status] of Object.entries(statuses)) {
+            const state = status.running ? `running (PID ${status.pid})` : "stopped";
+            console.log(`  ${id}: ${state}`);
+          }
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err.message : String(err));
+      }
+    });
+
+  // LOGS — show recent serve logs
+  serve
+    .command("logs")
+    .description("Show recent serve logs")
+    .option("--dir <path>", "Project root directory", ".")
+    .option("--follow", "Tail logs in real time")
+    .option("--offering <id>", "Filter by offering ID")
+    .option("--level <level>", "Filter by log level (info, error, warn)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+
+      try {
+        const { homedir } = require("os");
+        const logDir = resolve(homedir(), ".acp", "serve", "logs");
+
+        if (!existsSync(logDir)) {
+          if (json) {
+            outputResult(json, { logs: [] });
+          } else {
+            console.log("No logs found. Start a server first with `acp serve start`.");
+          }
+          return;
+        }
+
+        // TODO: Implement log reading and tailing
+        // - Read log files from ~/.acp/serve/logs/
+        // - Filter by --offering and --level
+        // - --follow: use fs.watch to tail new entries
+        //
+        // For now, point to where logs would be
+        if (!json) {
+          console.log(`Log directory: ${logDir}`);
+          console.log(`\nUse --follow to tail logs in real time.`);
+          if (opts.offering) console.log(`Filtering by offering: ${opts.offering}`);
+          if (opts.level) console.log(`Filtering by level: ${opts.level}`);
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err.message : String(err));
+      }
+    });
 }

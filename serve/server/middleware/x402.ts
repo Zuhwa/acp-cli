@@ -1,16 +1,11 @@
 /**
- * x402 Middleware
+ * x402 Middleware (Hono)
  *
- * Wraps a handler with x402 payment gating.
- * Facilitator logic is embedded — verify + settle all in one process.
- *
- * Flow:
- * 1. No payment → 402 + PAYMENT-REQUIRED
- * 2. Payment present → verify (embedded facilitator) → run handler
- *    → settle via 8183 → 200 + deliverable
+ * Returns a Hono handler that wraps a request with x402 payment gating.
+ * Facilitator logic embedded — verify + settle all in one process.
  */
 
-import type { IncomingMessage, ServerResponse } from "http";
+import type { Context } from "hono";
 import type { DeployedOffering } from "../../types";
 import type { LoadedHandlers } from "../../runtime/loader";
 import { verifyX402Payment } from "../facilitator/x402";
@@ -27,9 +22,7 @@ function buildPaymentRequiredHeader(offering: DeployedOffering): string {
       {
         scheme: "exact",
         network: `eip155:${CHAIN_ID}`,
-        maxAmountRequired: String(
-          Math.round(offering.offering.priceValue * 1_000_000)
-        ),
+        maxAmountRequired: String(Math.round(offering.offering.priceValue * 1_000_000)),
         resource: `/x402/${offering.offeringId}`,
         description: offering.offering.description,
         payTo: offering.providerWallet,
@@ -42,85 +35,64 @@ function buildPaymentRequiredHeader(offering: DeployedOffering): string {
   return Buffer.from(JSON.stringify(payload)).toString("base64");
 }
 
-export async function handleX402(
-  req: IncomingMessage,
-  res: ServerResponse,
-  offering: DeployedOffering,
-  handlers: LoadedHandlers
-): Promise<void> {
-  const paymentSignature = req.headers["payment-signature"] as string | undefined;
+export function x402Middleware(offering: DeployedOffering, handlers: LoadedHandlers) {
+  return async (c: Context) => {
+    const paymentSignature = c.req.header("payment-signature");
 
-  if (!paymentSignature) {
-    res.writeHead(402, {
-      "Content-Type": "application/json",
-      "Payment-Required": buildPaymentRequiredHeader(offering),
-    });
-    res.end(JSON.stringify({ error: "Payment required" }));
-    return;
-  }
-
-  try {
-    // Verify payment (embedded facilitator)
-    const verification = await verifyX402Payment(paymentSignature);
-    if (!verification.valid) {
-      res.writeHead(402, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: verification.error || "Payment verification failed" }));
-      return;
+    // No payment → 402
+    if (!paymentSignature) {
+      return c.json({ error: "Payment required" }, 402, {
+        "Payment-Required": buildPaymentRequiredHeader(offering),
+      });
     }
 
-    // Run handler
-    const requirements = await parseRequirements(req);
-    const input = buildHandlerInput(offering, requirements, verification.clientAddress, "x402");
-    const result = await handlers.handler(input);
+    try {
+      // Verify (embedded facilitator)
+      const verification = await verifyX402Payment(paymentSignature);
+      if (!verification.valid) {
+        return c.json({ error: verification.error || "Payment verification failed" }, 402);
+      }
 
-    // Settle via 8183 (createJob → fund → submit → complete)
-    const settlement = await settleVia8183({
-      providerAddress: offering.providerWallet,
-      clientAddress: verification.clientAddress,
-      paymentData: paymentSignature,
-      deliverable: result.deliverable,
-      description: `x402: ${offering.offering.name}`,
-      budget: offering.offering.priceValue,
-      slaMinutes: offering.offering.slaMinutes,
-    });
+      // Parse requirements
+      let requirements: Record<string, unknown> | string = {};
+      if (c.req.method === "POST") {
+        try { requirements = await c.req.json(); } catch { requirements = await c.req.text(); }
+      } else {
+        const params: Record<string, string> = {};
+        new URL(c.req.url).searchParams.forEach((v, k) => (params[k] = v));
+        if (Object.keys(params).length > 0) requirements = params;
+      }
 
-    // Return deliverable
-    const paymentResponse = Buffer.from(
-      JSON.stringify({
-        success: true,
-        network: `eip155:${CHAIN_ID}`,
-        payer: verification.clientAddress,
-        jobId: settlement.jobId,
-      })
-    ).toString("base64");
+      // Run handler
+      const input = buildHandlerInput(offering, requirements, verification.clientAddress, "x402");
+      const result = await handlers.handler(input);
 
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-      "Payment-Response": paymentResponse,
-    });
-    res.end(JSON.stringify({ deliverable: result.deliverable }));
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: err instanceof Error ? err.message : "Internal error" }));
-  }
-}
+      // Settle via 8183
+      const settlement = await settleVia8183({
+        providerAddress: offering.providerWallet,
+        clientAddress: verification.clientAddress,
+        paymentData: paymentSignature,
+        deliverable: result.deliverable,
+        description: `x402: ${offering.offering.name}`,
+        budget: offering.offering.priceValue,
+        slaMinutes: offering.offering.slaMinutes,
+      });
 
-async function parseRequirements(req: IncomingMessage): Promise<Record<string, unknown> | string> {
-  if (req.method === "POST") {
-    const body = await readBody(req);
-    try { return JSON.parse(body); } catch { return body; }
-  }
-  const url = new URL(req.url || "/", `http://${req.headers.host}`);
-  const params: Record<string, string> = {};
-  url.searchParams.forEach((v, k) => (params[k] = v));
-  return Object.keys(params).length > 0 ? params : {};
-}
+      // Return deliverable
+      const paymentResponse = Buffer.from(
+        JSON.stringify({
+          success: true,
+          network: `eip155:${CHAIN_ID}`,
+          payer: verification.clientAddress,
+          jobId: settlement.jobId,
+        })
+      ).toString("base64");
 
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => resolve(body));
-    req.on("error", reject);
-  });
+      return c.json({ deliverable: result.deliverable }, 200, {
+        "Payment-Response": paymentResponse,
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "Internal error" }, 500);
+    }
+  };
 }

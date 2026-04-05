@@ -2,18 +2,19 @@
  * x402 Middleware
  *
  * Wraps a handler with x402 payment gating.
- * The offering server handles the HTTP protocol (402 responses, headers).
- * All on-chain work (verification, 8183 settlement) is delegated to our backend.
+ * Facilitator logic is embedded — verify + settle all in one process.
  *
  * Flow:
  * 1. No payment → 402 + PAYMENT-REQUIRED
- * 2. Payment present → backend /verify → run handler → backend /settle → 200
+ * 2. Payment present → verify (embedded facilitator) → run handler
+ *    → settle via 8183 → 200 + deliverable
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
 import type { DeployedOffering } from "../../types";
 import type { LoadedHandlers } from "../../runtime/loader";
-import * as backend from "../backend-client";
+import { verifyX402Payment } from "../facilitator/x402";
+import { settleVia8183 } from "../acp/job";
 import { buildHandlerInput } from "./shared";
 
 const CHAIN_ID = Number(process.env.ACP_CHAIN_ID || "84532");
@@ -49,7 +50,6 @@ export async function handleX402(
 ): Promise<void> {
   const paymentSignature = req.headers["payment-signature"] as string | undefined;
 
-  // No payment → 402
   if (!paymentSignature) {
     res.writeHead(402, {
       "Content-Type": "application/json",
@@ -60,28 +60,21 @@ export async function handleX402(
   }
 
   try {
-    // 1. Backend verifies the payment signature
-    const verification = await backend.verify({
-      protocol: "x402",
-      offeringId: offering.offeringId,
-      paymentData: paymentSignature,
-    });
-
+    // Verify payment (embedded facilitator)
+    const verification = await verifyX402Payment(paymentSignature);
     if (!verification.valid) {
       res.writeHead(402, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: verification.error || "Payment verification failed" }));
       return;
     }
 
-    // 2. Parse requirements and run handler
+    // Run handler
     const requirements = await parseRequirements(req);
     const input = buildHandlerInput(offering, requirements, verification.clientAddress, "x402");
     const result = await handlers.handler(input);
 
-    // 3. Backend settles — creates 8183 job, funds via hook, submits deliverable, completes
-    const settlement = await backend.settle({
-      protocol: "x402",
-      offeringId: offering.offeringId,
+    // Settle via 8183 (createJob → fund → submit → complete)
+    const settlement = await settleVia8183({
       providerAddress: offering.providerWallet,
       clientAddress: verification.clientAddress,
       paymentData: paymentSignature,
@@ -91,7 +84,7 @@ export async function handleX402(
       slaMinutes: offering.offering.slaMinutes,
     });
 
-    // 4. Return deliverable with payment response
+    // Return deliverable
     const paymentResponse = Buffer.from(
       JSON.stringify({
         success: true,

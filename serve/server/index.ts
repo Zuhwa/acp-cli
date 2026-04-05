@@ -1,13 +1,18 @@
 /**
  * Offering Server
  *
- * HTTP server deployed per offering. Handles x402 and MPP protocol
- * at the HTTP layer. All on-chain work delegated to our ACP backend.
+ * Self-contained server deployed per offering. Handles everything:
+ * - x402 protocol (embedded facilitator: verify + settle via 8183)
+ * - MPP protocol (embedded verifier: on-chain receipt + settle via 8183)
+ * - ACP native (event listener + handler + submit via SDK)
+ * - Handler runtime (developer's handler.ts)
+ * - ERC-8183 settlement (via ACP SDK + deploy signer)
  *
- * This is what gets deployed via `acp serve deploy` or run locally
- * via `acp serve start`. The developer's handler.ts runs here.
+ * No separate backend needed. All logic — facilitator, verification,
+ * settlement, handler — runs in one process.
  *
- * For ACP native: connects to backend via WebSocket for job events.
+ * Deployed as an encrypted package via `acp serve deploy`.
+ * Or run locally via `acp serve start`.
  */
 
 import { createServer } from "http";
@@ -16,8 +21,6 @@ import { handleX402 } from "./middleware/x402";
 import { handleMPP } from "./middleware/mpp";
 import { loadHandlers } from "../runtime/loader";
 import type { DeployedOffering } from "../types";
-import * as backend from "./backend-client";
-import { buildHandlerInput } from "./middleware/shared";
 
 export interface ServerOptions {
   dir: string;
@@ -41,10 +44,10 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
     hasValidator: !!handlers.validator,
     hasPricer: !!handlers.pricer,
     protocols,
-    evaluator: "backend",
+    evaluator: "self",
   };
 
-  // Start ACP native listener if enabled
+  // ACP native: listen for events via SDK
   if (protocols.includes("acp")) {
     startACPListener(deployed, handlers);
   }
@@ -53,19 +56,16 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     const path = url.pathname;
 
-    // x402 endpoint
     if (path === `/x402/${offering.id}` && protocols.includes("x402")) {
       await handleX402(req, res, deployed, handlers);
       return;
     }
 
-    // MPP endpoint
     if (path === `/mpp/${offering.id}` && protocols.includes("mpp")) {
       await handleMPP(req, res, deployed, handlers);
       return;
     }
 
-    // Health check
     if (path === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
@@ -81,7 +81,7 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
   });
 
   server.listen(port, () => {
-    console.log(`\nACP Serve — Offering Server running on port ${port}\n`);
+    console.log(`\nACP Serve running on port ${port}\n`);
     console.log(`Offering: ${offering.name} (${offering.id})`);
     console.log(`Provider: ${providerWallet}\n`);
     console.log("Endpoints:");
@@ -92,10 +92,9 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
       console.log(`  MPP:  http://localhost:${port}/mpp/${offering.id}`);
     }
     if (protocols.includes("acp")) {
-      console.log(`  ACP:  connected to backend (events)`);
+      console.log(`  ACP:  listening for events (native)`);
     }
-    console.log(`\nBackend: ${process.env.ACP_BACKEND_URL || "http://localhost:4000"}`);
-    console.log(`Health:  http://localhost:${port}/health`);
+    console.log(`\nHealth: http://localhost:${port}/health`);
   });
 
   const shutdown = async () => {
@@ -107,20 +106,12 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
   process.on("SIGTERM", shutdown);
 }
 
-/**
- * ACP native listener — connects to backend for job events.
- * When a job is funded, runs the handler and calls backend /submit.
- */
 function startACPListener(
   offering: DeployedOffering,
   handlers: ReturnType<typeof loadHandlers> extends Promise<infer T> ? T : never
 ): void {
-  // TODO: Connect to backend WebSocket for job events
-  // backend pushes: { jobId, chainId, status, requirements }
-  // On job.funded:
-  //   1. Run handler(requirements) → deliverable
-  //   2. Call backend.submit({ jobId, chainId, deliverable })
-  //   3. Backend does submit + complete on-chain
-
+  // TODO: Use ACP SDK event listener
+  // agent.on("entry") → run validate → price → handler → submit
+  // Same flow as before, using deploy signer via createAgentFromConfig()
   console.log(`[ACP] Listening for native jobs: ${offering.offering.name}`);
 }

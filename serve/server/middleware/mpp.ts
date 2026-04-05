@@ -2,18 +2,20 @@
  * MPP Middleware
  *
  * Wraps a handler with MPP payment gating.
- * Same pattern as x402 — offering server handles HTTP, backend does on-chain.
+ * Verification and settlement all in one process.
  *
  * Flow:
  * 1. No auth → 402 + WWW-Authenticate challenge
- * 2. Credential present → backend /verify → run handler → backend /settle → 200
+ * 2. Credential present → verify (on-chain receipt) → run handler
+ *    → settle via 8183 → 200 + deliverable + Payment-Receipt
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
 import { Challenge, Receipt } from "mppx";
 import type { DeployedOffering } from "../../types";
 import type { LoadedHandlers } from "../../runtime/loader";
-import * as backend from "../backend-client";
+import { verifyMPPPayment } from "../facilitator/mpp";
+import { settleVia8183 } from "../acp/job";
 import { buildHandlerInput } from "./shared";
 
 const CHAIN_ID = Number(process.env.ACP_CHAIN_ID || "84532");
@@ -26,7 +28,6 @@ export async function handleMPP(
 ): Promise<void> {
   const authHeader = req.headers["authorization"] as string | undefined;
 
-  // No auth → 402 with challenge
   if (!authHeader || !authHeader.startsWith("Payment ")) {
     const challenge = Challenge.from({
       id: `${offering.offeringId}-${Date.now()}`,
@@ -53,28 +54,21 @@ export async function handleMPP(
   try {
     const credentialData = authHeader.replace("Payment ", "");
 
-    // 1. Backend verifies the payment credential (on-chain receipt check)
-    const verification = await backend.verify({
-      protocol: "mpp",
-      offeringId: offering.offeringId,
-      paymentData: credentialData,
-    });
-
+    // Verify payment (embedded)
+    const verification = await verifyMPPPayment(credentialData);
     if (!verification.valid) {
       res.writeHead(402, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: verification.error || "Payment verification failed" }));
       return;
     }
 
-    // 2. Parse requirements and run handler
+    // Run handler
     const requirements = await parseRequirements(req);
     const input = buildHandlerInput(offering, requirements, verification.clientAddress, "mpp");
     const result = await handlers.handler(input);
 
-    // 3. Backend settles — creates 8183 job, funds, submits deliverable, completes
-    const settlement = await backend.settle({
-      protocol: "mpp",
-      offeringId: offering.offeringId,
+    // Settle via 8183
+    const settlement = await settleVia8183({
       providerAddress: offering.providerWallet,
       clientAddress: verification.clientAddress,
       paymentData: credentialData,
@@ -84,7 +78,7 @@ export async function handleMPP(
       slaMinutes: offering.offering.slaMinutes,
     });
 
-    // 4. Return deliverable with receipt
+    // Return deliverable with receipt
     const receipt = Receipt.from({
       method: "tempo",
       reference: settlement.jobId,

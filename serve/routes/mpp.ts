@@ -28,6 +28,7 @@ import {
   submitAndComplete,
   buildHandlerInput,
 } from "../acp/job";
+import { getGatewayAddress } from "../gateway";
 
 const CHAIN_ID = 84532;
 const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
@@ -115,7 +116,7 @@ export async function handleMPPRequest(
       request: {
         amount,
         currency: "USDC",
-        recipient: offering.providerWallet,
+        recipient: getGatewayAddress(), // Gateway receives, hook routes to 8183 escrow
         methodDetails: { chainId: CHAIN_ID },
       },
     });
@@ -147,13 +148,13 @@ export async function handleMPPRequest(
       return;
     }
 
-    // Verify on-chain payment
+    // Verify on-chain payment went to gateway
     const expectedAmount = BigInt(
       Math.round(offering.offering.priceValue * 1_000_000)
     );
     const verification = await verifyOnChainTransfer(
       txHash,
-      offering.providerWallet,
+      getGatewayAddress(),
       expectedAmount
     );
 
@@ -171,6 +172,8 @@ export async function handleMPPRequest(
     const requirements = await parseRequirements(req);
 
     // Route payment through 8183: createJob + fund
+    // For MPP "hash"/"transaction" type, gateway already received the USDC.
+    // PaymentHook TYPE_DIRECT: fund() pulls from gateway → escrow normally.
     const job = await createAndFundJob({
       providerAddress: offering.providerWallet,
       clientAddress: payer,
@@ -178,6 +181,7 @@ export async function handleMPPRequest(
       description: `MPP: ${offering.offering.name}`,
       budget: offering.offering.priceValue,
       slaMinutes: offering.offering.slaMinutes,
+      // No paymentAuth for MPP — gateway already has USDC from the on-chain transfer
     });
 
     // Run handler

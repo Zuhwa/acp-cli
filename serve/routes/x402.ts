@@ -29,6 +29,7 @@ import {
   submitAndComplete,
   buildHandlerInput,
 } from "../acp/job";
+import { getGatewayAddress } from "../gateway";
 
 const CHAIN_ID = 84532;
 const NETWORK = `eip155:${CHAIN_ID}`;
@@ -47,7 +48,7 @@ function buildPaymentRequirements(offering: DeployedOffering): Record<string, un
     amount: String(Math.round(offering.offering.priceValue * 1_000_000)),
     resource: `/x402/${offering.offeringId}`,
     description: offering.offering.description,
-    payTo: offering.providerWallet,
+    payTo: getGatewayAddress(), // Gateway receives payment, hook routes to 8183 escrow atomically
     asset: USDC_ADDRESS,
     maxTimeoutSeconds: offering.offering.slaMinutes * 60,
     extra: {},
@@ -129,6 +130,8 @@ export async function handleX402Request(
     const requirements_data = await parseRequirements(req);
 
     // Route payment through 8183: createJob + fund
+    // The client's EIP-3009 authorization is passed as paymentAuth.
+    // PaymentHook executes it during fund(): client → gateway → escrow (atomic)
     const job = await createAndFundJob({
       providerAddress: offering.providerWallet,
       clientAddress,
@@ -136,6 +139,7 @@ export async function handleX402Request(
       description: `x402: ${offering.offering.name}`,
       budget: offering.offering.priceValue,
       slaMinutes: offering.offering.slaMinutes,
+      paymentAuth: JSON.stringify(payload),
     });
 
     // Run handler
@@ -151,18 +155,17 @@ export async function handleX402Request(
     // 8183: submit + complete
     await submitAndComplete(job.jobId, job.chainId, result.deliverable);
 
-    // Settle the x402 payment on-chain (the actual USDC transfer)
-    // This moves the client's funds — the 8183 escrow is funded separately
-    // from the gateway's balance, then replenished by this settlement.
-    const settleResult = await facilitatorScheme.settle(payload as any, requirements as any);
+    // No separate settle() needed — the PaymentHook already executed the
+    // client's authorization atomically during fund(). USDC already moved:
+    //   client → gateway → escrow → provider (on complete)
 
     // Return deliverable with payment response
     const paymentResponse = Buffer.from(
       JSON.stringify({
-        success: settleResult.success,
-        transaction: settleResult.transaction,
+        success: true,
         network: NETWORK,
         payer: clientAddress,
+        jobId: job.jobId,
       })
     ).toString("base64");
 

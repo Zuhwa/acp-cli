@@ -6,7 +6,8 @@
  * Uses viem public client for on-chain reads.
  */
 
-import { createPublicClient, http } from "viem";
+import { createPublicClient, createWalletClient, http, publicActions } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { Credential } from "mppx";
 
@@ -36,9 +37,33 @@ export async function verifyMPPPayment(credentialData: string): Promise<{
     if (payload?.type === "transaction" && signature) {
       // "transaction" type — client signed but didn't submit
       // We submit it on-chain, then verify the receipt
-      // TODO: submit signed tx via eth_sendRawTransaction
-      // For now, validate the signature format
-      return { valid: true, clientAddress, txHash: "" };
+      const privateKey = process.env.DEPLOY_SIGNER_KEY || process.env.GATEWAY_PRIVATE_KEY;
+      if (!privateKey) {
+        return { valid: false, clientAddress: "", txHash: "", error: "No signer key for tx submission" };
+      }
+
+      const rpcUrl = process.env.GATEWAY_RPC_URL || "https://sepolia.base.org";
+      const account = privateKeyToAccount(privateKey as `0x${string}`);
+      const walletClient = createWalletClient({
+        account,
+        chain: baseSepolia,
+        transport: http(rpcUrl),
+      }).extend(publicActions);
+
+      // Submit the client's pre-signed transaction
+      const txHash = await walletClient.sendRawTransaction({
+        serializedTransaction: signature as `0x${string}`,
+      });
+
+      // Wait for confirmation
+      const receipt = await walletClient.waitForTransactionReceipt({ hash: txHash });
+      if (receipt.status !== "success") {
+        return { valid: false, clientAddress, txHash, error: "Transaction reverted" };
+      }
+
+      // Extract sender from receipt
+      const from = receipt.from;
+      return { valid: true, clientAddress: from || clientAddress, txHash };
     }
 
     if (!txHash) {

@@ -11,6 +11,7 @@ import type { LoadedHandlers } from "../../runtime/loader";
 import { verifyX402Payment } from "../facilitator/x402";
 import { settleVia8183 } from "../acp/job";
 import { buildHandlerInput } from "./shared";
+import { log } from "../logger";
 
 const CHAIN_ID = Number(process.env.ACP_CHAIN_ID || "84532");
 const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
@@ -48,6 +49,7 @@ export function x402Middleware(offering: DeployedOffering, handlers: LoadedHandl
 
     try {
       // Verify (embedded facilitator)
+      log("info", offering.offeringId, "x402 payment received", { protocol: "x402" });
       const verification = await verifyX402Payment(paymentSignature);
       if (!verification.valid) {
         return c.json({ error: verification.error || "Payment verification failed" }, 402);
@@ -64,10 +66,12 @@ export function x402Middleware(offering: DeployedOffering, handlers: LoadedHandl
       }
 
       // Run handler
+      log("info", offering.offeringId, `Running handler for client ${verification.clientAddress}`, { protocol: "x402" });
       const input = buildHandlerInput(offering, requirements, verification.clientAddress, "x402");
       const result = await handlers.handler(input);
 
       // Settle via 8183
+      log("info", offering.offeringId, "Settling via 8183", { protocol: "x402" });
       const settlement = await settleVia8183({
         providerAddress: offering.providerWallet,
         clientAddress: verification.clientAddress,
@@ -88,10 +92,15 @@ export function x402Middleware(offering: DeployedOffering, handlers: LoadedHandl
         })
       ).toString("base64");
 
+      log("info", offering.offeringId, `Job ${settlement.jobId} settled successfully`, {
+        protocol: "x402", jobId: settlement.jobId,
+      });
+
       return c.json({ deliverable: result.deliverable }, 200, {
         "Payment-Response": paymentResponse,
       });
     } catch (err) {
+      log("error", offering.offeringId, err instanceof Error ? err.message : "Internal error", { protocol: "x402" });
       return c.json({ error: err instanceof Error ? err.message : "Internal error" }, 500);
     }
   };

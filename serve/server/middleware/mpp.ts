@@ -12,6 +12,7 @@ import type { LoadedHandlers } from "../../runtime/loader";
 import { verifyMPPPayment } from "../facilitator/mpp";
 import { settleVia8183 } from "../acp/job";
 import { buildHandlerInput } from "./shared";
+import { log } from "../logger";
 
 const CHAIN_ID = Number(process.env.ACP_CHAIN_ID || "84532");
 
@@ -44,6 +45,7 @@ export function mppMiddleware(offering: DeployedOffering, handlers: LoadedHandle
       const credentialData = authHeader.replace("Payment ", "");
 
       // Verify (embedded)
+      log("info", offering.offeringId, "MPP credential received", { protocol: "mpp" });
       const verification = await verifyMPPPayment(credentialData);
       if (!verification.valid) {
         return c.json({ error: verification.error || "Payment verification failed" }, 402);
@@ -60,10 +62,12 @@ export function mppMiddleware(offering: DeployedOffering, handlers: LoadedHandle
       }
 
       // Run handler
+      log("info", offering.offeringId, `Running handler for client ${verification.clientAddress}`, { protocol: "mpp" });
       const input = buildHandlerInput(offering, requirements, verification.clientAddress, "mpp");
       const result = await handlers.handler(input);
 
       // Settle via 8183
+      log("info", offering.offeringId, "Settling via 8183", { protocol: "mpp" });
       const settlement = await settleVia8183({
         providerAddress: offering.providerWallet,
         clientAddress: verification.clientAddress,
@@ -82,10 +86,15 @@ export function mppMiddleware(offering: DeployedOffering, handlers: LoadedHandle
         status: "success",
       });
 
+      log("info", offering.offeringId, `Job ${settlement.jobId} settled successfully`, {
+        protocol: "mpp", jobId: settlement.jobId,
+      });
+
       return c.json({ deliverable: result.deliverable }, 200, {
         "Payment-Receipt": Receipt.serialize(receipt),
       });
     } catch (err) {
+      log("error", offering.offeringId, err instanceof Error ? err.message : "Internal error", { protocol: "mpp" });
       return c.json({ error: err instanceof Error ? err.message : "Internal error" }, 500);
     }
   };

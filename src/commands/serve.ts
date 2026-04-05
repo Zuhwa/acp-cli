@@ -519,6 +519,7 @@ export function registerServeCommands(program: Command): void {
 
       try {
         const { homedir } = require("os");
+        const { readdirSync, watchFile, statSync } = require("fs");
         const logDir = resolve(homedir(), ".acp", "serve", "logs");
 
         if (!existsSync(logDir)) {
@@ -530,17 +531,93 @@ export function registerServeCommands(program: Command): void {
           return;
         }
 
-        // TODO: Implement log reading and tailing
-        // - Read log files from ~/.acp/serve/logs/
-        // - Filter by --offering and --level
-        // - --follow: use fs.watch to tail new entries
-        //
-        // For now, point to where logs would be
-        if (!json) {
-          console.log(`Log directory: ${logDir}`);
-          console.log(`\nUse --follow to tail logs in real time.`);
-          if (opts.offering) console.log(`Filtering by offering: ${opts.offering}`);
-          if (opts.level) console.log(`Filtering by level: ${opts.level}`);
+        // Find log files
+        const logFiles = readdirSync(logDir)
+          .filter((f: string) => f.endsWith(".log"))
+          .filter((f: string) => !opts.offering || f === `${opts.offering}.log`)
+          .map((f: string) => resolve(logDir, f));
+
+        if (logFiles.length === 0) {
+          if (json) {
+            outputResult(json, { logs: [] });
+          } else {
+            console.log("No log files found.");
+          }
+          return;
+        }
+
+        // Read and filter log entries
+        const allLogs: Array<Record<string, unknown>> = [];
+        for (const file of logFiles) {
+          const content = readFileSync(file, "utf-8").trim();
+          if (!content) continue;
+          for (const line of content.split("\n")) {
+            try {
+              const entry = JSON.parse(line);
+              if (opts.level && entry.level !== opts.level) continue;
+              allLogs.push(entry);
+            } catch {}
+          }
+        }
+
+        // Sort by timestamp
+        allLogs.sort((a, b) =>
+          String(a.timestamp).localeCompare(String(b.timestamp))
+        );
+
+        if (json) {
+          outputResult(json, { logs: allLogs });
+        } else {
+          // Print last 50 entries
+          const recent = allLogs.slice(-50);
+          for (const entry of recent) {
+            const level = String(entry.level).toUpperCase().padEnd(5);
+            const time = String(entry.timestamp).slice(11, 19);
+            const offering = entry.offeringId || "";
+            const job = entry.jobId ? ` [job:${entry.jobId}]` : "";
+            console.log(`${time} ${level} [${offering}]${job} ${entry.message}`);
+          }
+
+          if (allLogs.length > 50) {
+            console.log(`\n... showing last 50 of ${allLogs.length} entries`);
+          }
+        }
+
+        // Follow mode — watch for new entries
+        if (opts.follow) {
+          console.log("\nTailing logs... (Ctrl+C to stop)\n");
+          const offsets = new Map<string, number>();
+          for (const file of logFiles) {
+            offsets.set(file, statSync(file).size);
+          }
+
+          for (const file of logFiles) {
+            watchFile(file, { interval: 1000 }, () => {
+              const currentSize = statSync(file).size;
+              const prevSize = offsets.get(file) || 0;
+              if (currentSize <= prevSize) return;
+
+              const content = readFileSync(file, "utf-8");
+              const newContent = content.slice(prevSize);
+              offsets.set(file, currentSize);
+
+              for (const line of newContent.trim().split("\n")) {
+                if (!line) continue;
+                try {
+                  const entry = JSON.parse(line);
+                  if (opts.level && entry.level !== opts.level) continue;
+                  const level = String(entry.level).toUpperCase().padEnd(5);
+                  const time = String(entry.timestamp).slice(11, 19);
+                  const offering = entry.offeringId || "";
+                  const job = entry.jobId ? ` [job:${entry.jobId}]` : "";
+                  console.log(`${time} ${level} [${offering}]${job} ${entry.message}`);
+                } catch {}
+              }
+            });
+          }
+
+          // Keep process alive for follow mode
+          await new Promise(() => {});
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err.message : String(err));

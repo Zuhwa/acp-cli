@@ -113,12 +113,83 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
   process.on("SIGTERM", shutdown);
 }
 
-function startACPListener(
+async function startACPListener(
   offering: DeployedOffering,
   handlers: LoadedHandlers
-): void {
-  // TODO: Wire ACP SDK event listener
-  // agent.on("entry") → validate → price → handler → submit
+): Promise<void> {
+  const { createAgentFromConfig } = await import("../../src/lib/agentFactory");
+  const { AssetToken } = await import("acp-node-v2");
+  const { buildHandlerInput } = await import("./middleware/shared");
+
+  const agent = await createAgentFromConfig();
+  const CHAIN_ID = Number(process.env.ACP_CHAIN_ID || "84532");
+
+  // Track jobs we're handling
+  const jobRequirements = new Map<string, Record<string, unknown> | string>();
+
+  agent.on("entry", async (session: any, entry: any) => {
+    const jobId = session.jobId;
+    const status = session.status;
+
+    // Capture requirements from requirement messages
+    if (entry.contentType === "requirement" && entry.content) {
+      try {
+        jobRequirements.set(jobId, JSON.parse(entry.content));
+      } catch {
+        jobRequirements.set(jobId, entry.content);
+      }
+    }
+
+    // Job created + requirements received → validate + set budget
+    if (status === "open" && jobRequirements.has(jobId)) {
+      const requirements = jobRequirements.get(jobId)!;
+      const input = buildHandlerInput(
+        offering, requirements, entry.from || "unknown", "acp", jobId
+      );
+
+      // Validate if validator exists
+      if (handlers.validator) {
+        const validation = await handlers.validator(input);
+        if (!validation.accept) {
+          console.log(`[ACP] Job ${jobId}: rejected — ${validation.reason}`);
+          jobRequirements.delete(jobId);
+          return;
+        }
+      }
+
+      // Price if pricer exists
+      let amount = offering.offering.priceValue;
+      if (handlers.pricer) {
+        const pricing = await handlers.pricer(input);
+        amount = pricing.amount;
+      }
+
+      console.log(`[ACP] Job ${jobId}: setting budget ${amount} USDC`);
+      await session.setBudget(AssetToken.usdc(amount, CHAIN_ID));
+    }
+
+    // Job funded → run handler + submit
+    if (status === "funded" && jobRequirements.has(jobId)) {
+      const requirements = jobRequirements.get(jobId)!;
+      const input = buildHandlerInput(
+        offering, requirements, entry.from || "unknown", "acp", jobId
+      );
+
+      console.log(`[ACP] Job ${jobId}: running handler...`);
+      const result = await handlers.handler(input);
+
+      console.log(`[ACP] Job ${jobId}: submitting deliverable`);
+      await session.submit(result.deliverable);
+    }
+
+    // Terminal states — cleanup
+    if (status === "completed" || status === "rejected" || status === "expired") {
+      console.log(`[ACP] Job ${jobId}: ${status}`);
+      jobRequirements.delete(jobId);
+    }
+  });
+
+  await agent.start();
   console.log(`[ACP] Listening for native jobs: ${offering.offering.name}`);
 }
 

@@ -26,61 +26,93 @@ Developers write a handler function for the job offering (`handler.ts`). ACP Ser
 
 ### Single deployable unit
 
-Each offering gets one self-contained server that handles everything:
+Each offering gets one self-contained server with four distinct internal roles:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Offering Server (one per offering)                           │
 │                                                               │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │  x402 Middleware                                         │ │
-│  │  - Serves 402 + PAYMENT-REQUIRED header                  │ │
-│  │  - Receives PAYMENT-SIGNATURE from client                │ │
-│  │  - Embedded facilitator: verify signature + balance      │ │
-│  │  - Settles via 8183 (not bare ERC-20 transfer)           │ │
-│  └─────────────────────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────────────────┐      │
+│  │  SERVER (HTTP layer)                                │      │
+│  │                                                     │      │
+│  │  x402 endpoint:                                     │      │
+│  │    - Serves 402 + PAYMENT-REQUIRED header           │      │
+│  │    - Receives PAYMENT-SIGNATURE from client         │      │
+│  │    - Returns 200 + deliverable + PAYMENT-RESPONSE   │      │
+│  │                                                     │      │
+│  │  MPP endpoint:                                      │      │
+│  │    - Serves 402 + WWW-Authenticate challenge        │      │
+│  │    - Receives Authorization: Payment credential     │      │
+│  │    - Returns 200 + deliverable + Payment-Receipt    │      │
+│  │                                                     │      │
+│  │  ACP native:                                        │      │
+│  │    - Listens for job events via ACP SDK             │      │
+│  └────────────────────┬───────────────────────────────┘      │
+│                       │ payment received                      │
+│                       ▼                                       │
+│  ┌────────────────────────────────────────────────────┐      │
+│  │  FACILITATOR (payment verification)                 │      │
+│  │                                                     │      │
+│  │  x402: verify EIP-3009 signature + balance          │      │
+│  │        (@x402/evm SDK)                              │      │
+│  │  MPP:  verify on-chain receipt or signed tx         │      │
+│  │        (mppx SDK + viem)                            │      │
+│  │  ACP:  no verification needed (SDK handles it)      │      │
+│  └────────────────────┬───────────────────────────────┘      │
+│                       │ payment verified                      │
+│                       ▼                                       │
+│  ┌────────────────────────────────────────────────────┐      │
+│  │  PROVIDER RUNTIME (handler execution)               │      │
+│  │                                                     │      │
+│  │  - Loads handler.ts (+ validate.ts, price.ts)       │      │
+│  │  - All three protocols call the same handler        │      │
+│  │  - requirements in → deliverable out                │      │
+│  └────────────────────┬───────────────────────────────┘      │
+│                       │ deliverable returned                  │
+│                       ▼                                       │
+│  ┌────────────────────────────────────────────────────┐      │
+│  │  8183 ORCHESTRATOR (on-chain settlement)            │      │
+│  │                                                     │      │
+│  │  1. createJob (client + provider addresses logged)  │      │
+│  │  2. setBudget (offering price)                      │      │
+│  │  3. fund (PaymentHook: client → escrow directly)    │      │
+│  │  4. submit (deliverable hash)                       │      │
+│  │  5. DefaultEvaluator contract auto-completes →      │      │
+│  │     escrow released to provider                     │      │
+│  │                                                     │      │
+│  │  Uses deploy signer (hosted) or dev wallet (local)  │      │
+│  └────────────────────────────────────────────────────┘      │
 │                                                               │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │  MPP Middleware                                          │ │
-│  │  - Serves 402 + WWW-Authenticate challenge               │ │
-│  │  - Receives Authorization: Payment credential            │ │
-│  │  - Embedded verifier: on-chain receipt or signed tx      │ │
-│  │  - Settles via 8183 (same as x402)                       │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                               │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │  ACP Native Listener                                     │ │
-│  │  - Listens for job events via ACP SDK                    │ │
-│  │  - Runs validate.ts → price.ts → handler.ts → submit    │ │
-│  │  - DefaultEvaluator auto-completes on-chain              │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                               │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │  Handler Runtime                                         │ │
-│  │  - Loads and runs developer's handler.ts                 │ │
-│  │  - All three protocols call the same handler             │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                               │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │  8183 Settlement (ACP SDK)                               │ │
-│  │  - createJob → setBudget → fund → submit → complete     │ │
-│  │  - PaymentHook routes client payment directly to escrow  │ │
-│  │  - Uses deploy signer (hosted) or dev wallet (local)     │ │
-│  │  - Gas sponsored via Privy infrastructure                │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                               │
-│  Deploy signer: signs 8183 intents on behalf of provider     │
-│  Gas: sponsored by Privy (same as existing ACP CLI)          │
+│  Signer:                                                      │
+│    Hosted: deploy signer (new key pair added to agent via     │
+│            add-signer flow, developer authenticates + approves)│
+│    Self-hosted: developer's existing key pair                  │
+│  Gas: sponsored (same as existing ACP CLI)                    │
 └──────────────────────────┬───────────────────────────────────┘
                            │ on-chain transactions
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  ERC-8183 Contract + PaymentHook (Tempo)                      │
+│  On-chain (Tempo)                                             │
 │                                                               │
-│  - Job escrow with evaluator attestation                      │
-│  - PaymentHook: routes x402/MPP payments to escrow            │
-│  - DefaultEvaluator: auto-completes after submit              │
-│  - ERC-8004 reputation on every completion                    │
+│  ERC-8183 Contract                                            │
+│    - Job escrow with evaluator attestation                    │
+│    - State: Open → Funded → Submitted → Completed             │
+│                                                               │
+│  PaymentHook                                                  │
+│    - Intercepts fund() to execute client's payment auth       │
+│    - Routes x402/MPP payments directly to escrow              │
+│    - Client money never touches the offering server           │
+│                                                               │
+│  DefaultEvaluator                                             │
+│    - Set as evaluator address when createJob() is called      │
+│    - Automatically calls complete() when submit() happens     │
+│    - No manual evaluation needed for API-style offerings      │
+│    - Releases escrow to provider immediately                  │
+│    - For complex jobs: replace with custom evaluator address  │
+│                                                               │
+│  ERC-8004 Reputation                                          │
+│    - Updated on every job completion                          │
+│    - Tracks client + provider addresses                       │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -96,8 +128,8 @@ No separate backend, no separate facilitator service. Everything in one encrypte
 
 | Mode | How it runs | Signer | Gas |
 |------|------------|--------|-----|
-| **Hosted** (`acp serve deploy`) | Deployed to ACP infrastructure as encrypted package | Deploy signer (generated at deploy time) | Sponsored via Privy |
-| **Self-hosted** (`acp serve start`) | Runs on developer's own machine/infra | Developer's own wallet (from `acp agent add-signer`) | Sponsored via Privy |
+| **Hosted** (`acp serve deploy`) | Deployed to ACP infrastructure as encrypted package | Deploy signer (generated at deploy time using `acp agent add-signer` flow - new key pair generated and added to the agent)  |
+| **Self-hosted** (`acp serve start`) | Runs on developer's own machine/infra | Developer's own existing key-pair |
 
 Both modes run the same code. The only difference is which signer key is used.
 
@@ -110,43 +142,46 @@ Both modes run the same code. The only difference is which signer key is used.
 The offering server acts as both the x402 resource server AND the facilitator. The client only talks to the offering server.
 
 ```
-x402 Client                      Offering Server                            8183 + Hook
-    │                                  │                                        │
-    │ GET /x402/<offering-id>          │                                        │
-    ├─────────────────────────────────►│                                        │
-    │                                  │                                        │
-    │◄─────────────────────────────────┤                                        │
-    │ 402 + PAYMENT-REQUIRED           │                                        │
-    │ (price, payTo, asset)            │                                        │
-    │                                  │                                        │
-    │ Client signs EIP-3009 auth       │                                        │
-    │ (off-chain, no gas)              │                                        │
-    │                                  │                                        │
-    │ GET /x402/<offering-id>          │                                        │
-    │ + PAYMENT-SIGNATURE header       │                                        │
-    ├─────────────────────────────────►│                                        │
-    │                                  │                                        │
-    │                                  │ Embedded facilitator:                  │
-    │                                  │   verify signature + balance           │
-    │                                  │   (@x402/evm SDK)                      │
-    │                                  │                                        │
-    │                                  │ Run handler.ts                         │
-    │                                  │   (requirements → deliverable)         │
-    │                                  │                                        │
-    │                                  │ 8183 settlement (ACP SDK):             │
-    │                                  │   createJob ──────────────────────────►│ Job Open
-    │                                  │   setBudget ──────────────────────────►│ Budget Set
-    │                                  │   fund(optParams=clientAuth) ─────────►│ Hook:
-    │                                  │                                        │   client → escrow
-    │                                  │                                        │ Job Funded
-    │                                  │   submit(deliverable) ────────────────►│ Job Submitted
-    │                                  │   DefaultEvaluator auto-completes ────►│ Job Completed
-    │                                  │                                        │ escrow → provider
-    │                                  │                                        │ ERC-8004 reputation++
-    │                                  │                                        │
-    │◄─────────────────────────────────┤                                        │
-    │ 200 + deliverable                │                                        │
-    │ + PAYMENT-RESPONSE               │                                        │
+x402 Client              Offering Server                  8183 + Hook         DefaultEvaluator
+    │                          │                                │                    │
+    │ GET /x402/<id>           │                                │                    │
+    ├─────────────────────────►│                                │                    │
+    │                          │                                │                    │
+    │◄─────────────────────────┤                                │                    │
+    │ 402 + PAYMENT-REQUIRED   │                                │                    │
+    │ (price, payTo, asset)    │                                │                    │
+    │                          │                                │                    │
+    │ Client signs EIP-3009    │                                │                    │
+    │ auth (off-chain, no gas) │                                │                    │
+    │                          │                                │                    │
+    │ GET /x402/<id>           │                                │                    │
+    │ + PAYMENT-SIGNATURE      │                                │                    │
+    ├─────────────────────────►│                                │                    │
+    │                          │                                │                    │
+    │                          │ [FACILITATOR]                  │                    │
+    │                          │ verify signature + balance     │                    │
+    │                          │ (@x402/evm SDK)                │                    │
+    │                          │                                │                    │
+    │                          │ [PROVIDER RUNTIME]             │                    │
+    │                          │ Run handler.ts                 │                    │
+    │                          │ (requirements → deliverable)   │                    │
+    │                          │                                │                    │
+    │                          │ [8183 ORCHESTRATOR]            │                    │
+    │                          │ createJob(eval=DefaultEval) ──►│ Job Open           │
+    │                          │ setBudget ────────────────────►│ Budget Set         │
+    │                          │ fund(optParams=clientAuth) ───►│ Hook:              │
+    │                          │                                │  client → escrow   │
+    │                          │                                │ Job Funded         │
+    │                          │ submit(deliverable) ──────────►│ Job Submitted      │
+    │                          │                                │        ────────────►│
+    │                          │                                │                    │ auto-complete()
+    │                          │                                │ Job Completed      │◄┘
+    │                          │                                │ escrow → provider  │
+    │                          │                                │ ERC-8004 rep++     │
+    │                          │                                │                    │
+    │◄─────────────────────────┤                                │                    │
+    │ 200 + deliverable        │                                │                    │
+    │ + PAYMENT-RESPONSE       │                                │                    │
 ```
 
 ### MPP flow
@@ -154,7 +189,7 @@ x402 Client                      Offering Server                            8183
 Same single-server model. MPP has no separate facilitator by design — verification is direct.
 
 ```
-MPP Client                       Offering Server                            8183 + Hook
+MPP Client               Offering Server                  8183 + Hook         DefaultEvaluator
     │                                  │                                        │
     │ GET /mpp/<offering-id>           │                                        │
     ├─────────────────────────────────►│                                        │
@@ -359,6 +394,33 @@ For `acp serve start` or self-hosted on developer's own infrastructure:
 ```
 
 The developer only provides handler code. Our runtime code is encrypted and not inspectable. The deploy signer is stored as an encrypted environment variable.
+
+---
+
+## CLI commands
+
+### Development and deployment
+
+| Command | Description |
+|---------|-------------|
+| `acp serve init --offering-id <id>` | Scaffold handler directory with templates |
+| `acp serve start` | Start local server (all protocols, foreground) |
+| `acp serve deploy` | Deploy to hosted infrastructure (encrypted package) |
+| `acp serve undeploy --offering-id <id>` | Remove hosted deployment + revoke deploy signer |
+| `acp serve endpoints` | Show x402/MPP/ACP endpoint URLs |
+
+### Management and monitoring
+
+| Command | Description |
+|---------|-------------|
+| `acp serve status` | Check if offering servers are running (local or hosted) |
+| `acp serve stop` | Stop running local offering servers |
+| `acp serve logs` | Show recent logs |
+| `acp serve logs --follow` | Tail logs in real time |
+| `acp serve logs --offering <id>` | Filter logs by offering |
+| `acp serve logs --level error` | Filter by log level |
+
+For **hosted deployments**, `status` and `logs` query the hosting platform's API to retrieve remote server status and logs. For **local** mode, `status` checks PID files and `stop` sends SIGTERM.
 
 ---
 

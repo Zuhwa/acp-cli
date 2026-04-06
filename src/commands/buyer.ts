@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import type { AcpAgentOffering } from "acp-node-v2";
 import { AssetToken } from "acp-node-v2";
 import { createAgentFromConfig } from "../lib/agentFactory";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 
 export function registerBuyerCommands(program: Command): void {
   const buyer = program
@@ -44,15 +44,23 @@ export function registerBuyerCommands(program: Command): void {
             ? await agent.createFundTransferJob(Number(opts.chainId), params)
             : await agent.createJob(Number(opts.chainId), params);
 
-          outputResult(json, {
-            success: true,
-            action: "create-job",
-            jobId: jobId.toString(),
-            provider: opts.provider,
-            evaluator,
-            description: opts.description,
-            hookAddress: opts.hook ?? (opts.fundTransfer ? "default" : "N/A"),
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "create-job",
+              jobId: jobId.toString(),
+              provider: opts.provider,
+              evaluator,
+              description: opts.description,
+              hookAddress: opts.hook ?? (opts.fundTransfer ? "default" : "N/A"),
+            });
+          } else {
+            console.log(`\nJob #${jobId} created successfully!`);
+            console.log(`  Provider:    ${maskAddress(opts.provider)}`);
+            console.log(`  Evaluator:   ${maskAddress(evaluator)}`);
+            console.log(`  Description: ${opts.description}`);
+            console.log(`  Chain:       ${opts.chainId}`);
+          }
         } finally {
           await agent.stop();
         }
@@ -83,12 +91,16 @@ export function registerBuyerCommands(program: Command): void {
 
           await session.fetchJob();
           await session.fund(AssetToken.usdc(Number(opts.amount), chainId));
-          outputResult(json, {
-            success: true,
-            action: "fund",
-            jobId: opts.jobId,
-            amount: opts.amount,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "fund",
+              jobId: opts.jobId,
+              amount: opts.amount,
+            });
+          } else {
+            console.log(`\nJob #${opts.jobId} funded with ${opts.amount} USDC`);
+          }
         } finally {
           await agent.stop();
         }
@@ -114,12 +126,16 @@ export function registerBuyerCommands(program: Command): void {
             throw new Error(`No session found for job ${opts.jobId}.`);
           }
           await session.complete(opts.reason);
-          outputResult(json, {
-            success: true,
-            action: "complete",
-            jobId: opts.jobId,
-            reason: opts.reason,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "complete",
+              jobId: opts.jobId,
+              reason: opts.reason,
+            });
+          } else {
+            console.log(`\nJob #${opts.jobId} completed — escrow released to seller`);
+          }
         } finally {
           await agent.stop();
         }
@@ -145,12 +161,19 @@ export function registerBuyerCommands(program: Command): void {
             throw new Error(`No session found for job ${opts.jobId}.`);
           }
           await session.reject(opts.reason);
-          outputResult(json, {
-            success: true,
-            action: "reject",
-            jobId: opts.jobId,
-            reason: opts.reason,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "reject",
+              jobId: opts.jobId,
+              reason: opts.reason,
+            });
+          } else {
+            console.log(`\nJob #${opts.jobId} rejected — escrow returned to buyer`);
+            if (opts.reason !== "Rejected") {
+              console.log(`  Reason: ${opts.reason}`);
+            }
+          }
         } finally {
           await agent.stop();
         }
@@ -198,13 +221,19 @@ export function registerBuyerCommands(program: Command): void {
             { evaluatorAddress: evaluator }
           );
 
-          outputResult(json, {
-            success: true,
-            action: "create-job-from-offering",
-            jobId: jobId.toString(),
-            provider: opts.provider,
-            offering: offering.name,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "create-job-from-offering",
+              jobId: jobId.toString(),
+              provider: opts.provider,
+              offering: offering.name,
+            });
+          } else {
+            console.log(`\nJob #${jobId} created from offering "${offering.name}"`);
+            console.log(`  Provider: ${maskAddress(opts.provider)}`);
+            console.log(`  Chain:    ${opts.chainId}`);
+          }
         } finally {
           await agent.stop();
         }

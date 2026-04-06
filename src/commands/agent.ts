@@ -1,6 +1,6 @@
 import * as readline from "readline";
 import type { Command } from "commander";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import {
   AgentApi,
   TokenizeResponse,
@@ -269,17 +269,26 @@ export function registerAgentCommands(program: Command): void {
 
         for (const a of data) {
           if (a.walletAddress) setAgentId(a.walletAddress, a.id);
-          console.log(`\n  ID:             ${a.id}`);
-          console.log(`  Name:           ${a.name}`);
-          console.log(`  Description:    ${a.description}`);
-          console.log(`  Role:           ${a.role}`);
-          console.log(`  Wallet:         ${a.walletAddress}`);
-          console.log(`  Created:        ${a.createdAt}`);
         }
 
-        console.log(
-          `\nPage ${meta.pagination.page} of ${meta.pagination.pageCount} (${meta.pagination.total} total)`
-        );
+        if (isTTY()) {
+          for (const a of data) {
+            console.log(`\n  ID:             ${a.id}`);
+            console.log(`  Name:           ${a.name}`);
+            console.log(`  Description:    ${a.description}`);
+            console.log(`  Role:           ${a.role}`);
+            console.log(`  Wallet:         ${a.walletAddress}`);
+            console.log(`  Created:        ${a.createdAt}`);
+          }
+          console.log(
+            `\nPage ${meta.pagination.page} of ${meta.pagination.pageCount} (${meta.pagination.total} total)`
+          );
+        } else {
+          console.log("ID\tNAME\tROLE\tWALLET");
+          for (const a of data) {
+            console.log(`${a.id}\t${a.name}\t${a.role}\t${a.walletAddress}`);
+          }
+        }
       } catch (err) {
         outputError(
           json,
@@ -417,52 +426,56 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      const chainRows: [string, string][] = (agentData.chains ?? []).map(
-        (c, i) => [`Chain ${c.chainId}`, `${c.tokenAddress ?? "Not tokenized"}`]
-      );
+      if (isTTY()) {
+        const chainRows: [string, string][] = (agentData.chains ?? []).map(
+          (c, i) => [`Chain ${c.chainId}`, `${c.tokenAddress ?? "Not tokenized"}`]
+        );
 
-      console.log("\nAgent Details:");
-      printTable([
-        ["ID", agentData.id],
-        ["Name", agentData.name],
-        ["Description", agentData.description],
-        ["Role", agentData.role],
-        ["Wallet Address", agentData.walletAddress ?? "N/A"],
-        ["Hidden", agentData.isHidden ? "Yes" : "No"],
-        ["Image", agentData.imageUrl ?? "N/A"],
-        ["Created", agentData.createdAt],
-        ...chainRows,
-      ]);
+        console.log("\nAgent Details:");
+        printTable([
+          ["ID", agentData.id],
+          ["Name", agentData.name],
+          ["Description", agentData.description],
+          ["Role", agentData.role],
+          ["Wallet Address", agentData.walletAddress ?? "N/A"],
+          ["Hidden", agentData.isHidden ? "Yes" : "No"],
+          ["Image", agentData.imageUrl ?? "N/A"],
+          ["Created", agentData.createdAt],
+          ...chainRows,
+        ]);
 
-      console.log("\nOfferings:");
-      if (agentData.offerings?.length) {
-        for (const o of agentData.offerings) {
-          printTable([
-            ["ID", o.id],
-            ["Name", o.name],
-            ["Description", o.description],
-            ["Price", `${o.priceValue} (${o.priceType})`],
-            ["SLA", `${o.slaMinutes} min`],
-            ["Hidden", o.isHidden ? "Yes" : "No"],
-            ["Private", o.isPrivate ? "Yes" : "No"],
-          ]);
+        console.log("\nOfferings:");
+        if (agentData.offerings?.length) {
+          for (const o of agentData.offerings) {
+            printTable([
+              ["ID", o.id],
+              ["Name", o.name],
+              ["Description", o.description],
+              ["Price", `${o.priceValue} (${o.priceType})`],
+              ["SLA", `${o.slaMinutes} min`],
+              ["Hidden", o.isHidden ? "Yes" : "No"],
+              ["Private", o.isPrivate ? "Yes" : "No"],
+            ]);
+          }
+        } else {
+          console.log("  N/A");
+        }
+
+        console.log("\nResources:");
+        if (agentData.resources?.length) {
+          for (const r of agentData.resources) {
+            printTable([
+              ["ID", r.id],
+              ["Name", r.name],
+              ["Description", r.description],
+              ["URL", r.url],
+            ]);
+          }
+        } else {
+          console.log("  N/A");
         }
       } else {
-        console.log("  N/A");
-      }
-
-      console.log("\nResources:");
-      if (agentData.resources?.length) {
-        for (const r of agentData.resources) {
-          printTable([
-            ["ID", r.id],
-            ["Name", r.name],
-            ["Description", r.description],
-            ["URL", r.url],
-          ]);
-        }
-      } else {
-        console.log("  N/A");
+        console.log(`${agentData.name}\t${agentData.role}\t${agentData.walletAddress ?? "N/A"}\t${agentData.id}`);
       }
     });
 
@@ -581,13 +594,13 @@ export function registerAgentCommands(program: Command): void {
       let txHash = "";
 
       if (tokenizeDetails.hasPaid) {
-        console.log("\nPayment already received, skipping transfer.");
+        if (!json) console.log("\nPayment already received, skipping transfer.");
       } else {
         const previousWallet = getActiveWallet();
         setActiveWallet(selected.walletAddress);
 
         try {
-          console.log(`Sending payment for tokenization...`);
+          if (!json) console.log(`Sending payment for tokenization...`);
 
           const acpAgent = await createAgentFromConfig();
           const client = acpAgent.getClient();
@@ -626,7 +639,7 @@ export function registerAgentCommands(program: Command): void {
       // Step 5: Call tokenize API
       let tokenizeResponse: TokenizeResponse;
       try {
-        console.log(`Tokenizing your agent on chain ID ${selectedChain.id}...`);
+        if (!json) console.log(`Tokenizing your agent on chain ID ${selectedChain.id}...`);
 
         tokenizeResponse = await agentApi.tokenize(
           selected.id,

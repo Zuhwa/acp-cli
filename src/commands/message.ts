@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { isJson, outputResult, outputError } from "../lib/output";
+import { getDefaultChainId } from "../lib/defaults";
 import { createAgentFromConfig } from "../lib/agentFactory";
 
 export function registerMessageCommands(program: Command): void {
@@ -11,7 +12,7 @@ export function registerMessageCommands(program: Command): void {
     .command("send")
     .description("Send a chat message in a job room")
     .requiredOption("--job-id <id>", "On-chain job ID")
-    .requiredOption("--chain-id <id>", "Chain ID", "84532")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .requiredOption("--content <text>", "Message content")
     .option(
       "--content-type <type>",

@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { isJson, outputResult, outputError } from "../lib/output";
+import { getDefaultChainId } from "../lib/defaults";
 import { getWalletAddress } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { formatUnits } from "viem";
@@ -51,7 +52,7 @@ export function registerJobCommands(program: Command): void {
       "Get full job history including status and all messages (REST, no socket connection needed)"
     )
     .requiredOption("--job-id <id>", "On-chain job ID")
-    .requiredOption("--chain-id <id>", "Chain ID", "84532")
+    .requiredOption("--chain-id <id>", "Chain ID", getDefaultChainId())
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {

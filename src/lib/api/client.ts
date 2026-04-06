@@ -5,6 +5,7 @@ import {
   isTokenExpired,
   setTokens,
 } from "../config";
+import { getDefaultChainId } from "../defaults";
 import { AuthApi } from "./auth";
 import { AgentApi } from "./agent";
 import { JobApi } from "./job";
@@ -67,7 +68,7 @@ async function resolveToken(
   if (walletAddress) {
     let token = getAgentToken(walletAddress);
     if (!token || isTokenExpired(token)) {
-      const chainId = Number(process.env.ACP_CHAIN_ID || "84532");
+      const chainId = Number(getDefaultChainId());
       token = await AuthApi.fetchAndStoreToken(walletAddress, chainId, apiUrl);
     }
     return token;

@@ -1,18 +1,19 @@
 /**
  * Runtime Loader
  *
- * Loads the developer's handler, validator, and pricer from an offering directory.
- * Used by the offering server to run handler.ts on each request.
+ * Loads the developer's handler and optional budget handler.
+ *
+ *   handler.ts    — REQUIRED: do the work, return deliverable
+ *   budget.ts     — OPTIONAL: dynamic pricing + fund requests (ACP native only)
  */
 
 import { resolve } from "path";
 import { existsSync } from "fs";
-import type { Handler, Validator, Pricer } from "../types";
+import type { Handler, BudgetHandler } from "../types";
 
 export interface LoadedHandlers {
   handler: Handler;
-  validator?: Validator;
-  pricer?: Pricer;
+  budgetHandler?: BudgetHandler;
 }
 
 export async function loadHandlers(dir: string): Promise<LoadedHandlers> {
@@ -23,19 +24,12 @@ export async function loadHandlers(dir: string): Promise<LoadedHandlers> {
   const handlerModule = await import(handlerPath);
   const handler: Handler = handlerModule.default;
 
-  let validator: Validator | undefined;
-  const validatePath = resolve(dir, "validate.ts");
-  if (existsSync(validatePath)) {
-    const validateModule = await import(validatePath);
-    validator = validateModule.default;
+  let budgetHandler: BudgetHandler | undefined;
+  const budgetPath = resolve(dir, "budget.ts");
+  if (existsSync(budgetPath)) {
+    const budgetModule = await import(budgetPath);
+    budgetHandler = budgetModule.default;
   }
 
-  let pricer: Pricer | undefined;
-  const pricePath = resolve(dir, "price.ts");
-  if (existsSync(pricePath)) {
-    const priceModule = await import(pricePath);
-    pricer = priceModule.default;
-  }
-
-  return { handler, validator, pricer };
+  return { handler, budgetHandler };
 }

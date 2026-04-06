@@ -60,8 +60,7 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
     offeringId: offering.id,
     providerWallet,
     offering,
-    hasValidator: !!handlers.validator,
-    hasPricer: !!handlers.pricer,
+    hasBudgetHandler: !!handlers.budgetHandler,
     protocols,
     evaluator: "self",
   };
@@ -180,32 +179,36 @@ async function startACPListener(
       }
     }
 
-    // Job created + requirements received → validate + set budget
+    // Job created + requirements received → propose budget
     if (status === "open" && jobRequirements.has(jobId)) {
       const requirements = jobRequirements.get(jobId)!;
       const input = buildHandlerInput(
         offering, requirements, entry.from || "unknown", "acp", jobId
       );
 
-      // Validate if validator exists
-      if (handlers.validator) {
-        const validation = await handlers.validator(input);
-        if (!validation.accept) {
-          console.log(`[ACP] Job ${jobId}: rejected — ${validation.reason}`);
-          jobRequirements.delete(jobId);
-          return;
+      // Use budget handler if exists, otherwise offering's fixed price
+      if (handlers.budgetHandler) {
+        const budget = await handlers.budgetHandler(input);
+
+        if (budget.fundRequest) {
+          // Set budget with fund request (service fee + working capital)
+          console.log(`[ACP] Job ${jobId}: setting budget ${budget.amount} USDC + fund request ${budget.fundRequest.transferAmount} USDC`);
+          await session.setBudgetWithFundRequest(
+            AssetToken.usdc(budget.amount, CHAIN_ID),
+            AssetToken.usdc(budget.fundRequest.transferAmount, CHAIN_ID),
+            budget.fundRequest.destination
+          );
+        } else {
+          // Set budget only (service fee)
+          console.log(`[ACP] Job ${jobId}: setting budget ${budget.amount} USDC`);
+          await session.setBudget(AssetToken.usdc(budget.amount, CHAIN_ID));
         }
+      } else {
+        // Default: use offering's fixed price
+        const amount = offering.offering.priceValue;
+        console.log(`[ACP] Job ${jobId}: setting budget ${amount} USDC (offering price)`);
+        await session.setBudget(AssetToken.usdc(amount, CHAIN_ID));
       }
-
-      // Price if pricer exists
-      let amount = offering.offering.priceValue;
-      if (handlers.pricer) {
-        const pricing = await handlers.pricer(input);
-        amount = pricing.amount;
-      }
-
-      console.log(`[ACP] Job ${jobId}: setting budget ${amount} USDC`);
-      await session.setBudget(AssetToken.usdc(amount, CHAIN_ID));
     }
 
     // Job funded → run handler + submit

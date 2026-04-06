@@ -3,7 +3,7 @@
  *
  * These types define the contract between the developer's handler code
  * and the ACP Serve runtime. The developer implements Handler (required)
- * and optionally Validator and Pricer.
+ * and optionally BudgetHandler (for ACP native jobs).
  */
 
 /** Input passed to all handler hooks */
@@ -37,43 +37,41 @@ export interface HandlerOutput {
   deliverable: string;
 }
 
-/** Output from the validator — accept or reject the job */
-export interface ValidateOutput {
-  accept: boolean;
-  reason?: string;
-}
-
-/** Output from the pricer — dynamic pricing */
-export interface PriceOutput {
-  /** USDC amount to charge */
+/** Output from the budget handler — service fee + optional fund request */
+export interface BudgetOutput {
+  /** USDC service fee to charge */
   amount: number;
+  /** Optional: request working capital from the client */
+  fundRequest?: {
+    /** USDC amount of working capital needed */
+    transferAmount: number;
+    /** Address to receive the working capital */
+    destination: string;
+  };
 }
 
 /**
  * The main handler function — REQUIRED.
  * Takes requirements, does the work, returns deliverable.
+ * Called for all protocols (x402, MPP, ACP native) on job.funded.
  */
 export type Handler = (input: HandlerInput) => Promise<HandlerOutput>;
 
 /**
- * Validator function — OPTIONAL.
- * Decides whether to accept an incoming job before pricing.
- * Only called for ACP native flow (x402/MPP use schema validation only).
+ * Budget handler — OPTIONAL (ACP native only).
+ * Called on job.created to propose a service fee and optionally
+ * request working capital. If not provided, the offering's fixed
+ * price is used with no fund request.
+ *
+ * x402/MPP use the offering's fixed price automatically.
  */
-export type Validator = (input: HandlerInput) => Promise<ValidateOutput>;
-
-/**
- * Pricer function — OPTIONAL.
- * Returns dynamic pricing based on requirements.
- * Only called for ACP native flow (x402/MPP use offering's fixed price).
- */
-export type Pricer = (input: HandlerInput) => Promise<PriceOutput>;
+export type BudgetHandler = (input: HandlerInput) => Promise<BudgetOutput>;
 
 /** Configuration file (serve.json) */
 export interface ServeConfig {
   offeringId: string;
   protocols: ("x402" | "mpp" | "acp")[];
-  evaluator?: string; // "default" or a custom evaluator contract address
+  evaluator?: string;
   port?: number;
 }
 
@@ -82,8 +80,7 @@ export interface DeployedOffering {
   offeringId: string;
   providerWallet: string;
   offering: HandlerInput["offering"];
-  hasValidator: boolean;
-  hasPricer: boolean;
+  hasBudgetHandler: boolean;
   protocols: ("x402" | "mpp" | "acp")[];
   evaluator: string;
 }

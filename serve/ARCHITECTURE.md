@@ -82,12 +82,12 @@ Each offering gets one self-contained server with four distinct internal roles:
 │  │    Simple request → response. Fixed offering price. │      │
 │  │                                                     │      │
 │  │  ACP native: full lifecycle                         │      │
-│  │    validate.ts → accept/reject job (optional)       │      │
-│  │    price.ts → dynamic pricing (optional)            │      │
+│  │    budget.ts → propose service fee + optional       │      │
+│  │      fund request for working capital (optional)    │      │
 │  │    handler.ts → do the work (required)              │      │
 │  │                                                     │      │
 │  │  All three protocols share the same handler.ts.     │      │
-│  │  validate.ts and price.ts are ACP native only.      │      │
+│  │  budget.ts is ACP native only.                      │      │
 │  └────────────────────┬───────────────────────────────┘      │
 │                       │ deliverable returned                  │
 │                       ▼                                       │

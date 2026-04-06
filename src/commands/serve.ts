@@ -6,7 +6,8 @@
  * acp serve endpoints — show endpoints for served offerings
  */
 
-import { resolve, basename } from "path";
+import { resolve, basename, dirname } from "path";
+import { fileURLToPath } from "url";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "fs";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError } from "../lib/output";
@@ -22,11 +23,13 @@ export function registerServeCommands(program: Command): void {
     .command("serve")
     .description("Deploy and run offerings as x402/MPP/ACP endpoints");
 
-  // INIT — scaffold a serve project or add an offering
+  // INIT — scaffold a handler for an offering
   serve
     .command("init")
-    .description("Scaffold a serve project with handler templates for an offering")
-    .requiredOption("--offering-id <id>", "Offering ID to serve")
+    .description(
+      "Scaffold a handler for an offering. Build first, register later."
+    )
+    .requiredOption("--name <name>", "Offering name")
     .option("--output <dir>", "Project root directory", ".")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -34,7 +37,7 @@ export function registerServeCommands(program: Command): void {
       try {
         const rootDir = resolve(opts.output);
 
-        // Get offering name from API for the folder name
+        // Get active agent
         const wallet = getActiveWallet();
         if (!wallet) {
           outputError(json, "No active agent set. Run `acp agent use` first.");
@@ -47,25 +50,47 @@ export function registerServeCommands(program: Command): void {
         }
         const { agentApi } = await getClient();
         const agentData = await agentApi.getById(agentId);
-        const offering = agentData.offerings?.find((o) => o.id === opts.offeringId);
-        if (!offering) {
-          outputError(json, `Offering ${opts.offeringId} not found. Run \`acp offering list\`.`);
-          return;
-        }
-
         const agentSlug = slugify(agentData.name);
-        const offeringSlug = slugify(offering.name);
+
+        // Create offering.json template
+        const offeringName = opts.name;
+        const template = readFileSync(
+          resolve(dirname(fileURLToPath(import.meta.url)), "../../serve/scaffold/offering.json.template"),
+          "utf-8"
+        );
+        const offeringJson = JSON.parse(template.replace("{{NAME}}", opts.name));
+
+        const offeringSlug = slugify(offeringName);
         const offeringDir = resolve(rootDir, "agents", agentSlug, "offerings", offeringSlug);
 
         if (existsSync(resolve(offeringDir, "handler.ts"))) {
-          outputError(json, `Handler already exists at ${offeringDir}. Delete it or use a different offering.`);
+          outputError(json, `Handler already exists at ${offeringDir}. Delete it or use a different name.`);
           return;
         }
 
         // Create offering directory
         mkdirSync(offeringDir, { recursive: true });
 
-        // Write serve.json at project root (create or update)
+        // Write offering.json
+        writeFileSync(
+          resolve(offeringDir, "offering.json"),
+          JSON.stringify(offeringJson, null, 2) + "\n"
+        );
+
+        // Write handler.ts
+        const scaffoldDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../serve/scaffold");
+        writeFileSync(
+          resolve(offeringDir, "handler.ts"),
+          readFileSync(resolve(scaffoldDir, "handler.ts.template"), "utf-8")
+        );
+
+        // Write budget.ts
+        writeFileSync(
+          resolve(offeringDir, "budget.ts"),
+          readFileSync(resolve(scaffoldDir, "budget.ts.template"), "utf-8")
+        );
+
+        // Write serve.json at project root
         const serveJsonPath = resolve(rootDir, "serve.json");
         let serveConfig: Record<string, unknown> = {
           agents: {},
@@ -81,47 +106,38 @@ export function registerServeCommands(program: Command): void {
         }
         const agentConfig = agents[agentId] as Record<string, unknown>;
         const offerings = (agentConfig.offerings || {}) as Record<string, unknown>;
-        offerings[opts.offeringId] = {
+        offerings[offeringSlug] = {
           dir: `agents/${agentSlug}/offerings/${offeringSlug}`,
           protocols: ["x402", "mpp", "acp"],
+          registered: false,
         };
         agentConfig.offerings = offerings;
         serveConfig.agents = agents;
         writeFileSync(serveJsonPath, JSON.stringify(serveConfig, null, 2) + "\n");
 
-        // Write handler.ts
-        const scaffoldDir = resolve(__dirname, "../../serve/scaffold");
-        writeFileSync(
-          resolve(offeringDir, "handler.ts"),
-          readFileSync(resolve(scaffoldDir, "handler.ts.template"), "utf-8")
-        );
-
-        // Write budget.ts
-        writeFileSync(
-          resolve(offeringDir, "budget.ts"),
-          readFileSync(resolve(scaffoldDir, "budget.ts.template"), "utf-8")
-        );
-
         if (json) {
           outputResult(json, {
             success: true,
-            offeringId: opts.offeringId,
-            offeringName: offering.name,
+            offeringName,
             directory: offeringDir,
-            files: ["handler.ts", "budget.ts"],
+            files: ["offering.json", "handler.ts", "budget.ts"],
           });
         } else {
-          console.log(`\nScaffolded offering: ${offering.name}\n`);
+          console.log(`\nScaffolded offering: ${offeringName}\n`);
           console.log(`  ${offeringDir}/`);
+          console.log(`    offering.json   — offering definition (edit before registering)`);
           console.log(`    handler.ts      — REQUIRED: do the work, return deliverable`);
           console.log(`    budget.ts       — OPTIONAL: dynamic pricing + fund requests (ACP native only)`);
-          console.log(`\n  For fixed-price offerings, budget.ts is not needed — the`);
-          console.log(`  offering's price is used automatically. Only add budget.ts`);
-          console.log(`  for dynamic pricing or working capital fund requests.`);
-          console.log(`\n  serve.json updated with offering ${opts.offeringId}`);
+          console.log(`\n  This offering is NOT yet registered on ACP.`);
+          console.log(`  Edit offering.json, then register with:`);
+          console.log(`    acp offering create --from-file ${offeringDir}/offering.json`);
+          console.log(`\n  For fixed-price offerings, budget.ts is not needed.`);
           console.log(`\nNext steps:`);
-          console.log(`  1. Edit agents/${agentSlug}/offerings/${offeringSlug}/handler.ts`);
-          console.log(`  2. Run: acp serve start`);
+          console.log(`  1. Edit handler.ts with your service logic`);
+          console.log(`  2. Edit offering.json with your price, requirements, deliverable`);
+          console.log(`  3. Test locally: acp serve start`);
+          console.log(`  4. Register: acp offering create --from-file ${offeringDir}/offering.json`);
+          console.log(`  5. Deploy: acp serve deploy`);
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err.message : String(err));

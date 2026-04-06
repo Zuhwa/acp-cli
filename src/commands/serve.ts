@@ -53,8 +53,9 @@ export function registerServeCommands(program: Command): void {
           return;
         }
 
+        const agentSlug = slugify(agentData.name);
         const offeringSlug = slugify(offering.name);
-        const offeringDir = resolve(rootDir, "offerings", offeringSlug);
+        const offeringDir = resolve(rootDir, "agents", agentSlug, "offerings", offeringSlug);
 
         if (existsSync(resolve(offeringDir, "handler.ts"))) {
           outputError(json, `Handler already exists at ${offeringDir}. Delete it or use a different offering.`);
@@ -67,19 +68,25 @@ export function registerServeCommands(program: Command): void {
         // Write serve.json at project root (create or update)
         const serveJsonPath = resolve(rootDir, "serve.json");
         let serveConfig: Record<string, unknown> = {
-          offerings: {},
+          agents: {},
           evaluator: "default",
           port: 3000,
         };
         if (existsSync(serveJsonPath)) {
           serveConfig = JSON.parse(readFileSync(serveJsonPath, "utf-8"));
         }
-        const offerings = (serveConfig.offerings || {}) as Record<string, unknown>;
+        const agents = (serveConfig.agents || {}) as Record<string, Record<string, unknown>>;
+        if (!agents[agentId]) {
+          agents[agentId] = { name: agentData.name, offerings: {} };
+        }
+        const agentConfig = agents[agentId] as Record<string, unknown>;
+        const offerings = (agentConfig.offerings || {}) as Record<string, unknown>;
         offerings[opts.offeringId] = {
-          dir: `offerings/${offeringSlug}`,
+          dir: `agents/${agentSlug}/offerings/${offeringSlug}`,
           protocols: ["x402", "mpp", "acp"],
         };
-        serveConfig.offerings = offerings;
+        agentConfig.offerings = offerings;
+        serveConfig.agents = agents;
         writeFileSync(serveJsonPath, JSON.stringify(serveConfig, null, 2) + "\n");
 
         // Write handler.ts
@@ -108,9 +115,12 @@ export function registerServeCommands(program: Command): void {
           console.log(`  ${offeringDir}/`);
           console.log(`    handler.ts      — REQUIRED: do the work, return deliverable`);
           console.log(`    budget.ts       — OPTIONAL: dynamic pricing + fund requests (ACP native only)`);
+          console.log(`\n  For fixed-price offerings, budget.ts is not needed — the`);
+          console.log(`  offering's price is used automatically. Only add budget.ts`);
+          console.log(`  for dynamic pricing or working capital fund requests.`);
           console.log(`\n  serve.json updated with offering ${opts.offeringId}`);
           console.log(`\nNext steps:`);
-          console.log(`  1. Edit offerings/${offeringSlug}/handler.ts`);
+          console.log(`  1. Edit agents/${agentSlug}/offerings/${offeringSlug}/handler.ts`);
           console.log(`  2. Run: acp serve start`);
         }
       } catch (err) {
@@ -149,10 +159,16 @@ export function registerServeCommands(program: Command): void {
           return;
         }
         const serveConfig = JSON.parse(readFileSync(serveJsonPath, "utf-8"));
-        const offeringEntries = serveConfig.offerings as Record<string, { dir: string; protocols: string[] }>;
+        const agents = serveConfig.agents as Record<string, { name: string; offerings: Record<string, { dir: string; protocols: string[] }> }>;
 
+        if (!agents || !agents[agentId]) {
+          outputError(json, `No offerings for agent ${agentId} in serve.json. Run \`acp serve init --offering-id <id>\`.`);
+          return;
+        }
+
+        const offeringEntries = agents[agentId].offerings;
         if (!offeringEntries || Object.keys(offeringEntries).length === 0) {
-          outputError(json, "No offerings configured in serve.json. Run `acp serve init --offering-id <id>`.");
+          outputError(json, "No offerings configured. Run `acp serve init --offering-id <id>`.");
           return;
         }
 
@@ -210,11 +226,12 @@ export function registerServeCommands(program: Command): void {
 
         const serveConfig = JSON.parse(readFileSync(serveJsonPath, "utf-8"));
         const port = opts.port || serveConfig.port || 3000;
-        const offeringEntries = serveConfig.offerings as Record<string, { dir: string; protocols: string[] }>;
+        const agents = serveConfig.agents as Record<string, { offerings: Record<string, { dir: string; protocols: string[] }> }>;
 
         const allEndpoints: Record<string, Record<string, string>> = {};
 
-        for (const [offeringId, entry] of Object.entries(offeringEntries)) {
+        for (const [, agentConfig] of Object.entries(agents || {})) {
+        for (const [offeringId, entry] of Object.entries(agentConfig.offerings || {})) {
           const endpoints: Record<string, string> = {};
           if (entry.protocols.includes("x402")) {
             endpoints.x402 = `http://localhost:${port}/x402/${offeringId}`;
@@ -226,6 +243,7 @@ export function registerServeCommands(program: Command): void {
             endpoints.acp = "listening for events (native)";
           }
           allEndpoints[offeringId] = endpoints;
+        }
         }
 
         if (json) {

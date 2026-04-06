@@ -338,13 +338,20 @@ acp serve init --offering-id <id>
 
 ```
 my-project/
-├── serve.json                     # project config (all offerings)
-└── offerings/
-    └── logo-design/
-        ├── handler.ts             # REQUIRED: requirements → deliverable
-        ├── validate.ts            # OPTIONAL: accept/reject jobs (ACP native)
-        └── price.ts               # OPTIONAL: dynamic pricing (ACP native)
+├── serve.json                          # project config (all agents + offerings)
+└── agents/
+    ├── bob/
+    │   └── offerings/
+    │       └── logo-design/
+    │           ├── handler.ts          # REQUIRED: do the work, return deliverable
+    │           └── budget.ts           # OPTIONAL: dynamic pricing + fund requests (ACP native)
+    └── alice/
+        └── offerings/
+            └── data-analysis/
+                └── handler.ts
 ```
+
+For fixed-price offerings, `budget.ts` is not needed — the offering's price is used automatically. Only add `budget.ts` for dynamic pricing or working capital fund requests.
 
 ```typescript
 // handler.ts — the only file the developer MUST write

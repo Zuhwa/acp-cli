@@ -24,7 +24,7 @@ export function registerJobCommands(program: Command): void {
         } else {
           if (jobs.length === 0) {
             console.log("No active jobs.");
-          } else {
+          } else if (isTTY()) {
             console.log(`Active jobs (${jobs.length}):\n`);
             for (const j of jobs) {
               console.log(`  Job ID:           ${j.onChainJobId}`);
@@ -38,6 +38,13 @@ export function registerJobCommands(program: Command): void {
               console.log(`  Status:           ${j.jobStatus}`);
               console.log(`  Expires At:       ${j.expiredAt}`);
               console.log();
+            }
+          } else {
+            console.log("JOB_ID\tCHAIN\tCLIENT\tPROVIDER\tBUDGET\tSTATUS");
+            for (const j of jobs) {
+              console.log(
+                `${j.onChainJobId}\t${j.chainId}\t${j.clientAddress}\t${j.providerAddress}\t${formatUnits(BigInt(j.budget), 6)}\t${j.jobStatus}`
+              );
             }
           }
         }
@@ -74,7 +81,7 @@ export function registerJobCommands(program: Command): void {
             entryCount: entries.length,
             entries,
           });
-        } else {
+        } else if (isTTY()) {
           console.log(`Job ${opts.jobId} (chain ${opts.chainId})`);
           console.log(`Status: ${status}`);
           console.log(`Entries: ${entries.length}\n`);
@@ -83,6 +90,15 @@ export function registerJobCommands(program: Command): void {
               console.log(`  [system] ${e.event.type}`);
             } else {
               console.log(`  [${e.from}] ${e.content}`);
+            }
+          }
+        } else {
+          console.log(`${opts.jobId}\t${status}\t${entries.length}`);
+          for (const e of entries) {
+            if (e.kind === "system") {
+              console.log(`system\t${e.event.type}`);
+            } else {
+              console.log(`${e.from}\t${e.content}`);
             }
           }
         }

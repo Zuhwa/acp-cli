@@ -1,6 +1,6 @@
 import * as readline from "readline";
 import type { Command } from "commander";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import type {
   AgentResource,
   CreateResourceBody,
@@ -69,9 +69,16 @@ export function registerResourceCommands(program: Command): void {
           return;
         }
 
-        for (const r of resources) {
-          printResource(r);
-          console.log();
+        if (isTTY()) {
+          for (const r of resources) {
+            printResource(r);
+            console.log();
+          }
+        } else {
+          console.log("ID\tNAME\tURL\tHIDDEN");
+          for (const r of resources) {
+            console.log(`${r.id}\t${r.name}\t${r.url}\t${r.isHidden ? "yes" : "no"}`);
+          }
         }
       } catch (err) {
         outputError(

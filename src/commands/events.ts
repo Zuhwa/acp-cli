@@ -8,8 +8,9 @@ import {
   unlinkSync,
   existsSync,
 } from "fs";
-import { createAgentFromConfig } from "../lib/agentFactory";
+import { createAgentFromConfig, getWalletAddress } from "../lib/agentFactory";
 import { isJson, outputResult, outputError } from "../lib/output";
+import { maskAddress } from "../lib/output";
 
 export function registerEventsCommand(program: Command): void {
   const events = program
@@ -23,6 +24,7 @@ export function registerEventsCommand(program: Command): void {
         "Each line is a lightweight event. Use `acp job status` for full context."
     )
     .option("--job-id <id>", "Filter events to a specific job ID")
+    .option("--events <types>", "Comma-separated event types to include (e.g. job.created,budget.set,job.funded)")
     .option("--output <path>", "Append events to a file instead of stdout")
     .action(async (opts) => {
       try {
@@ -32,8 +34,19 @@ export function registerEventsCommand(program: Command): void {
           ? (line: string) => appendFileSync(opts.output, line + "\n")
           : (line: string) => process.stdout.write(line + "\n");
 
+        const allowedEvents: Set<string> | undefined = opts.events
+          ? new Set(opts.events.split(",").map((s: string) => s.trim()))
+          : undefined;
+
         agent.on("entry", async (session: JobSession, entry: JobRoomEntry) => {
           if (opts.jobId && session.jobId !== opts.jobId) return;
+
+          if (allowedEvents) {
+            const entryAny = entry as Record<string, unknown>;
+            const event = entryAny.event as Record<string, unknown> | undefined;
+            const eventType = event?.type as string | undefined;
+            if (!eventType || !allowedEvents.has(eventType)) return;
+          }
 
           const line = JSON.stringify({
             jobId: session.jobId,
@@ -47,6 +60,16 @@ export function registerEventsCommand(program: Command): void {
         });
 
         await agent.start();
+
+        const wallet = getWalletAddress();
+        process.stderr.write(`Listening for events... connected.\n`);
+        process.stderr.write(`Agent: ${maskAddress(wallet)}\n`);
+        if (opts.output) {
+          process.stderr.write(`Writing to: ${opts.output}\n`);
+        }
+        if (allowedEvents) {
+          process.stderr.write(`Filtering: ${[...allowedEvents].join(", ")}\n`);
+        }
 
         const shutdown = async () => {
           await agent.stop();

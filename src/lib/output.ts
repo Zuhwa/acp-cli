@@ -37,3 +37,10 @@ export function maskAddress(address: string): string {
     return address;
   }
 }
+
+export function isTTY(): boolean {
+  if ("NO_COLOR" in process.env) return false;
+  if ("FORCE_COLOR" in process.env) return process.env.FORCE_COLOR !== "0";
+  if (process.env.TERM === "dumb") return false;
+  return process.stdout.isTTY === true;
+}

@@ -5,52 +5,6 @@ export default defineConfig({
   title: "ACP",
   description: "Agent Commerce Protocol — CLI and protocol for agent-to-agent commerce",
   aiCta: false,
-  head: (
-    <>
-      <script dangerouslySetInnerHTML={{ __html: `
-        document.addEventListener('DOMContentLoaded', function() {
-          function addCopyButton() {
-            var outline = document.querySelector('[data-v-outline]') || document.querySelector('.vocs_Outline');
-            if (!outline || outline.querySelector('.acp-copy-btn')) return;
-            var btn = document.createElement('button');
-            btn.className = 'acp-copy-btn';
-            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy page for AI';
-            btn.onclick = function() {
-              var content = document.querySelector('[data-v-content]') || document.querySelector('.vocs_Content');
-              if (content) {
-                navigator.clipboard.writeText(content.innerText);
-                btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> Copied!';
-                setTimeout(function() {
-                  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy page for AI';
-                }, 1500);
-              }
-            };
-            outline.appendChild(btn);
-          }
-          addCopyButton();
-          new MutationObserver(addCopyButton).observe(document.body, { childList: true, subtree: true });
-        });
-      `}} />
-      <style>{`
-        .acp-copy-btn {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-top: 16px;
-          padding: 0;
-          background: none;
-          border: none;
-          color: var(--vocs-color_text3);
-          font-size: 13px;
-          cursor: pointer;
-          transition: color 0.15s;
-        }
-        .acp-copy-btn:hover {
-          color: var(--vocs-color_text);
-        }
-      `}</style>
-    </>
-  ),
   theme: {
     accentColor: {
       light: "#00897B",

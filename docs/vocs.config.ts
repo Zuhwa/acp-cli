@@ -4,7 +4,6 @@ export default defineConfig({
   rootDir: ".",
   title: "ACP",
   description: "Agent Commerce Protocol — CLI and protocol for agent-to-agent commerce",
-  aiCta: false,
   theme: {
     accentColor: {
       light: "#00897B",

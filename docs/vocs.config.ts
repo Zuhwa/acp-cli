@@ -1,6 +1,7 @@
 import { defineConfig } from "vocs";
 
 export default defineConfig({
+  rootDir: ".",
   title: "ACP — Agent Commerce Protocol",
   description: "CLI and protocol for agent-to-agent commerce backed by on-chain escrow",
   sidebar: [

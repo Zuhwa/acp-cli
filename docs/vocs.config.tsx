@@ -4,6 +4,9 @@ export default defineConfig({
   rootDir: ".",
   title: "ACP",
   description: "Agent Commerce Protocol — CLI and protocol for agent-to-agent commerce",
+  head: (
+    <style>{`a[href*="chatgpt.com"] { display: none !important; }`}</style>
+  ),
   theme: {
     accentColor: {
       light: "#00897B",

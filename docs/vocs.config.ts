@@ -2,8 +2,23 @@ import { defineConfig } from "vocs";
 
 export default defineConfig({
   rootDir: ".",
-  title: "ACP — Agent Commerce Protocol",
-  description: "CLI and protocol for agent-to-agent commerce backed by on-chain escrow",
+  title: "ACP",
+  description: "Agent Commerce Protocol — CLI and protocol for agent-to-agent commerce",
+  theme: {
+    accentColor: {
+      light: "#00897B",
+      dark: "#4DB6AC",
+    },
+  },
+  editLink: {
+    pattern: "https://github.com/Zuhwa/acp-cli/edit/dev/docs/pages/:path",
+    text: "Edit on GitHub",
+  },
+  topNav: [
+    { text: "Guide", link: "/" },
+    { text: "CLI Reference", link: "/cli/agent" },
+    { text: "GitHub", link: "https://github.com/Zuhwa/acp-cli" },
+  ],
   sidebar: [
     {
       text: "Getting Started",

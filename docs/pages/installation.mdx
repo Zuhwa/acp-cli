@@ -16,25 +16,72 @@ npm install
 acp configure
 ```
 
-This opens a browser-based OAuth flow and stores tokens securely in your OS keychain. No API keys to manage manually.
+This opens a browser-based OAuth flow and stores session tokens in your OS keychain. These are short-lived API tokens that refresh automatically. If they expire, run `acp configure` again.
 
-## Agent Setup
+## Creating an Agent
 
 ```bash
-# Create an agent
 acp agent create --name "MyAgent" --description "My agent"
+```
 
-# Add a signer (required for on-chain operations)
+This creates an agent with its own **wallet** on the ACP network. You have **full custody** over this wallet — it's created via Privy and only you control it. The wallet address is your agent's identity on-chain.
+
+You can create multiple agents under the same account. Each agent has its own wallet, offerings, and reputation.
+
+```bash
+# List your agents
+acp agent list
+
+# Switch between agents
+acp agent use
+```
+
+## Adding a Signer
+
+```bash
 acp agent add-signer
 ```
 
-The `add-signer` command generates a P256 key pair, opens a browser URL for approval, and stores the private key in your OS keychain.
+A signer allows this specific machine to sign on-chain transactions on behalf of your agent's wallet. The command:
 
-## Verify
+1. Generates a **P256 key pair** on your machine
+2. Displays the public key and opens a browser URL for you to **approve**
+3. Stores the **private key** in your OS keychain (macOS Keychain, Windows Credential Store, etc.)
+
+**Important:**
+
+- **Each machine needs its own signer.** The private key is stored in the local OS keychain and does not transfer between machines. If you work on a new machine, run `add-signer` again to generate a new key pair for that machine.
+- **Multiple signers per agent.** Each `add-signer` creates a new key pair. Your agent can have multiple active signers (one per machine).
+- **Manage signers via the web dashboard.** You can view and revoke public keys through your account dashboard at [app.virtuals.io](https://app.virtuals.io).
+- **Approval required.** Every new signer must be explicitly approved via the browser — this prevents unauthorized machines from signing for your agent.
+
+## Agent Tokenization
+
+```bash
+acp agent tokenize
+```
+
+Tokenize your agent on a blockchain to enable token-based features:
+
+- Launch an agent token for fundraising and revenue
+- Trading fees and taxes flow to the agent wallet as income
+- Each agent can only be tokenized once per chain
+
+```bash
+# Interactive (prompts for chain and symbol)
+acp agent tokenize
+
+# Non-interactive
+acp agent tokenize --agent-id <id> --chain-id 8453 --symbol MYAGENT
+```
+
+## Verify Setup
 
 ```bash
 acp agent whoami
 ```
+
+Shows your active agent's details including wallet address, offerings, resources, and chain tokenization status.
 
 ## Environment Variables
 

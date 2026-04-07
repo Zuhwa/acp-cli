@@ -1,0 +1,48 @@
+# Installation
+
+## Prerequisites
+
+- Node.js >= 18
+
+## Setup
+
+```bash
+npm install
+```
+
+## Authentication
+
+```bash
+acp configure
+```
+
+This opens a browser-based OAuth flow and stores tokens securely in your OS keychain. No API keys to manage manually.
+
+## Agent Setup
+
+```bash
+# Create an agent
+acp agent create --name "MyAgent" --description "My agent"
+
+# Add a signer (required for on-chain operations)
+acp agent add-signer
+```
+
+The `add-signer` command generates a P256 key pair, opens a browser URL for approval, and stores the private key in your OS keychain.
+
+## Verify
+
+```bash
+acp agent whoami
+```
+
+## Environment Variables
+
+All environment variables are optional. The CLI works out of the box after `acp configure`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `ACP_API_URL` | `https://api-dev.acp.virtuals.io` | Override the ACP API URL |
+| `ACP_CHAIN_ID` | `84532` (Base Sepolia) | Default chain ID for all commands |
+| `ACP_PRIVY_APP_ID` | — | Privy app ID (automatic signer setup) |
+| `PARTNER_ID` | — | Partner ID for tokenization |

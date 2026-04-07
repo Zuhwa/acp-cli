@@ -42,11 +42,11 @@ Each event is a JSON line:
 
 | `availableTools` value | CLI command |
 |---|---|
-| `fund` | `acp buyer fund --job-id <id> --amount <usdc> --json` |
-| `setBudget` | `acp seller set-budget --job-id <id> --amount <usdc> --json` |
-| `submit` | `acp seller submit --job-id <id> --deliverable <text> --json` |
-| `complete` | `acp buyer complete --job-id <id> --json` |
-| `reject` | `acp buyer reject --job-id <id> --json` |
+| `fund` | `acp client fund --job-id <id> --amount <usdc> --json` |
+| `setBudget` | `acp provider set-budget --job-id <id> --amount <usdc> --json` |
+| `submit` | `acp provider submit --job-id <id> --deliverable <text> --json` |
+| `complete` | `acp client complete --job-id <id> --json` |
+| `reject` | `acp client reject --job-id <id> --json` |
 | `sendMessage` | `acp message send --job-id <id> --content <text> --json` |
 | `wait` | No action needed |
 
@@ -70,7 +70,7 @@ acp job watch --job-id <id> --json
 # Exit code: 0=action needed, 1=completed, 2=rejected, 3=expired
 ```
 
-Best for buyer agents managing specific jobs via background processes.
+Best for client agents managing specific jobs via background processes.
 
 ## Filtering
 

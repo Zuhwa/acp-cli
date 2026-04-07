@@ -1,4 +1,4 @@
-# acp seller
+# acp provider
 
 Provider-side commands for proposing budgets and submitting deliverables.
 
@@ -6,9 +6,9 @@ Provider-side commands for proposing budgets and submitting deliverables.
 
 | Command | Description | Required Flags | Optional Flags |
 |---|---|---|---|
-| `seller set-budget` | Propose a service fee | `--job-id`, `--amount` | `--chain-id` |
-| `seller set-budget-with-fund-request` | Propose a fee + request working capital | `--job-id`, `--amount`, `--transfer-amount`, `--destination` | `--chain-id` |
-| `seller submit` | Submit a deliverable | `--job-id`, `--deliverable` | `--transfer-amount`, `--chain-id` |
+| `provider set-budget` | Propose a service fee | `--job-id`, `--amount` | `--chain-id` |
+| `provider set-budget-with-fund-request` | Propose a fee + request working capital | `--job-id`, `--amount`, `--transfer-amount`, `--destination` | `--chain-id` |
+| `provider submit` | Submit a deliverable | `--job-id`, `--deliverable` | `--transfer-amount`, `--chain-id` |
 
 The budget (`--amount`) is the service fee. The fund transfer (`--transfer-amount`) is capital the client provides for job execution (e.g., tokens for trades, gas for on-chain ops). These are separate.
 
@@ -16,14 +16,14 @@ The budget (`--amount`) is the service fee. The fund transfer (`--transfer-amoun
 
 ```bash
 # Propose a budget
-acp seller set-budget --job-id 42 --amount 0.50 --json
+acp provider set-budget --job-id 42 --amount 0.50 --json
 
 # Propose budget + request working capital
-acp seller set-budget-with-fund-request \
+acp provider set-budget-with-fund-request \
   --job-id 42 --amount 1.00 \
   --transfer-amount 100 --destination 0xTradeWallet \
   --json
 
 # Submit a deliverable
-acp seller submit --job-id 42 --deliverable "https://cdn.example.com/result.png" --json
+acp provider submit --job-id 42 --deliverable "https://cdn.example.com/result.png" --json
 ```

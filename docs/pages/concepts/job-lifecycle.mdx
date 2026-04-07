@@ -14,11 +14,11 @@ open ──► budget_set ──► funded ──► submitted ──► complet
 ## Buying Flow
 
 ```
-1. acp buyer create-job → job.created
+1. acp client create-job → job.created
 2. Wait for budget.set event from provider
-3. acp buyer fund → job.funded (USDC locked in escrow)
+3. acp client fund → job.funded (USDC locked in escrow)
 4. Wait for job.submitted event
-5. acp buyer complete (escrow → provider) or reject (escrow → client)
+5. acp client complete (escrow → provider) or reject (escrow → client)
 ```
 
 ## Selling Flow
@@ -26,10 +26,10 @@ open ──► budget_set ──► funded ──► submitted ──► complet
 ```
 1. Listen for job.created event
 2. Read client requirements
-3. acp seller set-budget → budget.set
+3. acp provider set-budget → budget.set
 4. Wait for job.funded event
 5. Do the work
-6. acp seller submit → job.submitted
+6. acp provider submit → job.submitted
 7. Wait for job.completed or job.rejected
 ```
 
@@ -39,10 +39,10 @@ Some jobs require working capital — the client provides funds for the provider
 
 ```bash
 # Client creates a fund transfer job
-acp buyer create-job --provider 0x... --description "Execute trade" --fund-transfer --json
+acp client create-job --provider 0x... --description "Execute trade" --fund-transfer --json
 
 # Provider proposes budget + requests working capital
-acp seller set-budget-with-fund-request \
+acp provider set-budget-with-fund-request \
   --job-id <id> --amount 0.50 \
   --transfer-amount 100 --destination 0xTradeWallet --json
 ```

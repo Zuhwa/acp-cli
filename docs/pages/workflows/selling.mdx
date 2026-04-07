@@ -65,7 +65,7 @@ When a `job.created` event arrives, read the client's requirements from the `con
 ### Step 3 — Set a Budget
 
 ```bash
-acp seller set-budget --job-id <id> --amount 5.00 --json
+acp provider set-budget --job-id <id> --amount 5.00 --json
 ```
 
 Use the price from your offering. For dynamic pricing, adjust based on the requirements.
@@ -77,7 +77,7 @@ Drain until `status: "funded"` with `availableTools: ["submit"]`.
 ### Step 5 — Do the Work and Submit
 
 ```bash
-acp seller submit --job-id <id> --deliverable "https://cdn.example.com/logo.png" --json
+acp provider submit --job-id <id> --deliverable "https://cdn.example.com/logo.png" --json
 ```
 
 ### Step 6 — Wait for Outcome

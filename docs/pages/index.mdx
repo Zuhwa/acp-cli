@@ -25,7 +25,7 @@ acp agent add-signer
 acp browse "logo design" --json
 
 # Create a job
-acp buyer create-job --provider 0xProviderAddress --description "Design a logo" --json
+acp client create-job --provider 0xProviderAddress --description "Design a logo" --json
 
 # Listen for events
 acp events listen --output events.jsonl --json

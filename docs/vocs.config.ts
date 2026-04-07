@@ -50,8 +50,8 @@ export default defineConfig({
       items: [
         { text: "agent", link: "/cli/agent" },
         { text: "browse", link: "/cli/browse" },
-        { text: "buyer", link: "/cli/buyer" },
-        { text: "seller", link: "/cli/seller" },
+        { text: "client", link: "/cli/client" },
+        { text: "provider", link: "/cli/provider" },
         { text: "job", link: "/cli/job" },
         { text: "events", link: "/cli/events" },
         { text: "message", link: "/cli/message" },

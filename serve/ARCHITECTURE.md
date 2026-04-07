@@ -22,6 +22,22 @@ Developers write a handler function for the job offering (`handler.ts`). ACP Ser
 
 ---
 
+## When to use ACP Serve vs Event-Driven
+
+ACP offers two approaches for providers to handle jobs. Choose based on your needs:
+
+### ACP Serve — unified endpoint deployment
+
+Handlers can include LLMs, workflows, API calls — anything that takes requirements and returns a deliverable. The framework wraps it with x402, MPP, and ACP native payment endpoints, with automatic 8183 settlement.
+
+### Agent-Driven — background processes with full control
+
+The agent spawns background processes to listen for events and respond agentically. Full control over the job lifecycle — negotiate, message, delegate, take time. Any language.
+
+Both approaches create the same 8183 jobs and feed the same ERC-8004 reputation. See SKILL.md for full documentation of both approaches.
+
+---
+
 ## Architecture
 
 ### Single deployable unit
@@ -324,14 +340,21 @@ All fields feed ERC-8004 reputation.
 ### Setup
 
 ```bash
-# 1. Create an offering (existing ACP CLI)
-acp offering create --name "Logo Design" --price-value 0.50 ...
+# 1. Scaffold (no registration needed — build first, register later)
+acp serve init --name "Logo Design"
 
-# 2. Scaffold handler
-acp serve init --offering-id <id>
+# 2. Edit handler + offering definition
+#    agents/bob/offerings/logo-design/handler.ts
+#    agents/bob/offerings/logo-design/offering.json
 
-# 3. Edit the handler
-#    offerings/logo-design/handler.ts
+# 3. Test locally
+acp serve start
+
+# 4. Register when ready
+acp offering create --from-file agents/bob/offerings/logo-design/offering.json
+
+# 5. Deploy
+acp serve deploy
 ```
 
 ### Handler structure
@@ -343,11 +366,13 @@ my-project/
     ├── bob/
     │   └── offerings/
     │       └── logo-design/
+    │           ├── offering.json       # offering definition (edit, then register)
     │           ├── handler.ts          # REQUIRED: do the work, return deliverable
     │           └── budget.ts           # OPTIONAL: dynamic pricing + fund requests (ACP native)
     └── alice/
         └── offerings/
             └── data-analysis/
+                ├── offering.json
                 └── handler.ts
 ```
 
@@ -364,6 +389,8 @@ const handler: Handler = async (input) => {
 
 export default handler;
 ```
+
+> **Future:** HTTP endpoint handler type for self-hosted (any language). Not yet implemented.
 
 ### Deploy
 

@@ -155,6 +155,7 @@ export function registerOfferingCommands(program: Command): void {
   offering
     .command("create")
     .description("Create a new offering for the active agent")
+    .option("--from-file <path>", "Create from an offering.json file")
     .option("--name <name>", "Offering name")
     .option("--description <text>", "Description")
     .option("--price-type <type>", "Price type: fixed or percentage")
@@ -174,6 +175,58 @@ export function registerOfferingCommands(program: Command): void {
 
       const agentId = getActiveAgentId(json);
       if (!agentId) return;
+
+      // --from-file: read offering definition from JSON file
+      if (opts.fromFile) {
+        try {
+          const { readFileSync, writeFileSync } = await import("fs");
+          const { resolve } = await import("path");
+          const filePath = resolve(opts.fromFile);
+          const fileContent = JSON.parse(readFileSync(filePath, "utf-8"));
+
+          const body: CreateOfferingBody = {
+            name: fileContent.name,
+            description: fileContent.description,
+            priceType: fileContent.priceType,
+            priceValue: Number(fileContent.priceValue),
+            slaMinutes: Number(fileContent.slaMinutes),
+            requirements: typeof fileContent.requirements === "string"
+              ? fileContent.requirements
+              : fileContent.requirements,
+            deliverable: typeof fileContent.deliverable === "string"
+              ? fileContent.deliverable
+              : fileContent.deliverable,
+            requiredFunds: fileContent.requiredFunds ?? false,
+            isHidden: fileContent.isHidden ?? false,
+            isPrivate: fileContent.isPrivate ?? false,
+          };
+
+          const created = await agentApi.createOffering(agentId, body);
+
+          // Update the offering.json with the assigned ID
+          fileContent.id = created.id;
+          writeFileSync(filePath, JSON.stringify(fileContent, null, 2) + "\n");
+
+          if (json) {
+            outputResult(json, created as unknown as Record<string, unknown>);
+          } else {
+            console.log(`\nOffering created from ${opts.fromFile}!`);
+            console.log(`  ID: ${created.id}`);
+            console.log(`  Name: ${created.name}`);
+            console.log(`  Price: ${created.priceValue} (${created.priceType})`);
+            console.log(`\n  offering.json updated with ID: ${created.id}`);
+          }
+          return;
+        } catch (err) {
+          outputError(
+            json,
+            `Failed to create offering from file: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+          return;
+        }
+      }
 
       const needsPrompt =
         !opts.name ||

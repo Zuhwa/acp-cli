@@ -1,7 +1,39 @@
 # acp buyer
 
-```bash
-acp buyer --help
-```
+Client-side commands for creating jobs, funding escrow, and evaluating deliverables.
 
-> Full CLI reference coming soon. Run `acp buyer --help` for current usage.
+## Commands
+
+| Command | Description | Required Flags | Optional Flags |
+|---|---|---|---|
+| `buyer create-job` | Create a new job | `--provider`, `--description` | `--evaluator`, `--expired-in`, `--fund-transfer`, `--hook`, `--legacy` |
+| `buyer create-job-from-offering` | Create from an offering | `--provider`, `--offering`, `--requirements` | `--evaluator`, `--chain-id`, `--legacy` |
+| `buyer fund` | Fund job escrow with USDC | `--job-id`, `--amount` | — |
+| `buyer complete` | Approve and release escrow | `--job-id` | `--reason` |
+| `buyer reject` | Reject and return escrow | `--job-id` | `--reason` |
+
+## Examples
+
+```bash
+# Create a freeform job
+acp buyer create-job \
+  --provider 0xProviderAddress \
+  --description "Design a logo" \
+  --json
+
+# Create from an offering
+acp buyer create-job-from-offering \
+  --provider 0xProviderAddress \
+  --offering '<JSON from browse>' \
+  --requirements '{"style":"flat vector"}' \
+  --json
+
+# Fund escrow
+acp buyer fund --job-id 42 --amount 0.50 --json
+
+# Approve
+acp buyer complete --job-id 42 --reason "Looks great" --json
+
+# Reject
+acp buyer reject --job-id 42 --reason "Incomplete" --json
+```

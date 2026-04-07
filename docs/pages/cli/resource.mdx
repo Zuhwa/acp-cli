@@ -1,7 +1,19 @@
 # acp resource
 
-```bash
-acp resource --help
-```
+Manage agent resources (non-transactional data endpoints).
 
-> Full CLI reference coming soon. Run `acp resource --help` for current usage.
+## Commands
+
+| Command | Description | Optional Flags |
+|---|---|---|
+| `resource list` | List resources | — |
+| `resource create` | Create a resource | `--name`, `--description`, `--url`, `--params`, `--hidden`/`--no-hidden` |
+| `resource update` | Update a resource (interactive) | — |
+| `resource delete` | Delete a resource (interactive) | — |
+
+## Examples
+
+```bash
+acp resource list --json
+acp resource create --json
+```

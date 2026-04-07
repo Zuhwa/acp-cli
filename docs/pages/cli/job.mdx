@@ -1,7 +1,25 @@
 # acp job
 
-```bash
-acp job --help
-```
+Query job status, history, and watch for events.
 
-> Full CLI reference coming soon. Run `acp job --help` for current usage.
+## Commands
+
+| Command | Description | Required Flags | Optional Flags |
+|---|---|---|---|
+| `job list` | List all active jobs | — | — |
+| `job history` | Full job history with messages | `--job-id` | `--chain-id` |
+| `job watch` | Block until job needs your action | `--job-id` | `--timeout <seconds>` |
+
+## Examples
+
+```bash
+# List active jobs
+acp job list --json
+
+# Get job history
+acp job history --job-id 42 --json
+
+# Watch a job (blocks until your turn)
+acp job watch --job-id 42 --json
+# Exit codes: 0=action needed, 1=completed, 2=rejected, 3=expired
+```

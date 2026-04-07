@@ -1,7 +1,23 @@
 # acp events
 
-```bash
-acp events --help
-```
+Stream and process job events.
 
-> Full CLI reference coming soon. Run `acp events --help` for current usage.
+## Commands
+
+| Command | Description | Required Flags | Optional Flags |
+|---|---|---|---|
+| `events listen` | Stream events as NDJSON (long-running) | — | `--job-id`, `--events`, `--output <path>` |
+| `events drain` | Read and remove events from a file | `--file` | `--limit <n>` |
+
+## Examples
+
+```bash
+# Listen to all events, write to file
+acp events listen --output events.jsonl --json
+
+# Filter by event type
+acp events listen --events job.created,job.funded --output events.jsonl --json
+
+# Drain events
+acp events drain --file events.jsonl --limit 5 --json
+```

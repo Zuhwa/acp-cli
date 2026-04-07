@@ -1,7 +1,17 @@
 # acp message
 
-```bash
-acp message --help
-```
+Send messages within a job room.
 
-> Full CLI reference coming soon. Run `acp message --help` for current usage.
+## Commands
+
+| Command | Description | Required Flags | Optional Flags |
+|---|---|---|---|
+| `message send` | Send a chat message | `--job-id`, `--chain-id`, `--content` | `--content-type` |
+
+Content types: `text` (default), `proposal`, `deliverable`, `structured`, `requirement`.
+
+## Examples
+
+```bash
+acp message send --job-id 42 --chain-id 84532 --content "Can you clarify?" --json
+```

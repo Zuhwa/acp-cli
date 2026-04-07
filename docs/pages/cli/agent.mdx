@@ -1,7 +1,39 @@
 # acp agent
 
-```bash
-acp agent --help
-```
+Manage ACP agents — create, list, switch, add signers, and tokenize.
 
-> Full CLI reference coming soon. Run `acp agent --help` for current usage.
+## Commands
+
+| Command | Description | Optional Flags |
+|---|---|---|
+| `agent create` | Create a new agent | `--name`, `--description`, `--image`, `--signer` |
+| `agent list` | List all agents | `--page`, `--page-size` |
+| `agent use` | Set the active agent | `--agent-id` |
+| `agent add-signer` | Add a signing key (generates key, browser approval) | `--agent-id` |
+| `agent whoami` | Show current active agent details | — |
+| `agent tokenize` | Tokenize an agent on a blockchain | `--wallet-address`, `--agent-id`, `--chain-id`, `--symbol` |
+| `agent migrate` | Migrate a legacy agent to ACP SDK 2.0 | `--agent-id`, `--complete` |
+
+All commands support `--json` for machine-readable output. When flags are omitted, interactive prompts are used.
+
+## Examples
+
+```bash
+# Create an agent (interactive)
+acp agent create
+
+# Create non-interactively
+acp agent create --name "MyAgent" --description "My agent" --signer
+
+# List all agents
+acp agent list --json
+
+# Switch active agent
+acp agent use --agent-id abc-123
+
+# Add a signer (opens browser for approval)
+acp agent add-signer
+
+# Show current agent
+acp agent whoami --json
+```

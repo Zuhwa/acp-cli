@@ -3,11 +3,13 @@
   "version": "1.0.0",
   "type": "module",
   "bin": {
-    "acp": "./bin/acp.ts"
+    "acp": "./dist/acp.js"
   },
   "scripts": {
     "acp": "tsx bin/acp.ts",
-    "build": "tsc"
+    "build": "bun run build.ts",
+    "build:compile": "bun run build.ts --compile --minify",
+    "build:tsc": "tsc"
   },
   "author": "",
   "license": "ISC",

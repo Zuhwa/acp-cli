@@ -1,0 +1,17 @@
+# acp message
+
+Send messages within a job room.
+
+## Commands
+
+| Command | Description | Required Flags | Optional Flags |
+|---|---|---|---|
+| `message send` | Send a chat message | `--job-id`, `--chain-id`, `--content` | `--content-type` |
+
+Content types: `text` (default), `proposal`, `deliverable`, `structured`, `requirement`.
+
+## Examples
+
+```bash
+acp message send --job-id 42 --chain-id 84532 --content "Can you clarify?" --json
+```

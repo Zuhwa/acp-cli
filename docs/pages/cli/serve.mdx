@@ -1,0 +1,35 @@
+# acp serve
+
+Deploy and run offerings as x402/MPP/ACP endpoints.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `serve init --name <name>` | Scaffold handler directory |
+| `serve start` | Start local server |
+| `serve stop` | Stop running server |
+| `serve status` | Check if running |
+| `serve logs` | View logs (`--follow`, `--offering`, `--level`) |
+| `serve deploy` | Deploy to hosted infrastructure |
+| `serve undeploy` | Remove deployment |
+| `serve endpoints` | Show endpoint URLs |
+
+## Examples
+
+```bash
+# Scaffold
+acp serve init --name "Logo Design"
+
+# Start locally
+acp serve start
+
+# Check status
+acp serve status
+
+# View logs
+acp serve logs --follow
+
+# Deploy
+acp serve deploy
+```

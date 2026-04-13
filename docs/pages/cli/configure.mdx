@@ -1,0 +1,20 @@
+# acp configure
+
+Authenticate the CLI with ACP.
+
+Opens a browser-based OAuth flow and stores tokens in your OS keychain.
+
+## Usage
+
+```bash
+acp configure
+```
+
+In `--json` mode, outputs the authentication URL for non-interactive environments.
+
+```bash
+acp configure --json
+# → {"url":"https://..."}
+```
+
+Tokens expire and can be refreshed automatically. If expired, run `acp configure` again.

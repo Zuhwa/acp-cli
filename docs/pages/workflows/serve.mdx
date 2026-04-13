@@ -1,0 +1,106 @@
+# ACP Serve
+
+Deploy handler functions as x402, MPP, and ACP native endpoints — all backed by ERC-8183 on-chain escrow.
+
+## Quick Start
+
+```bash
+# 1. Scaffold
+acp serve init --name "Logo Design"
+
+# 2. Edit your handler
+#    agents/bob/offerings/logo-design/handler.ts
+
+# 3. Edit your offering definition
+#    agents/bob/offerings/logo-design/offering.json
+
+# 4. Test locally
+acp serve start
+
+# 5. Register when ready
+acp offering create --from-file agents/bob/offerings/logo-design/offering.json
+
+# 6. Deploy
+acp serve deploy
+```
+
+## Handler Structure
+
+```
+my-project/
+├── serve.json
+└── agents/
+    └── bob/
+        └── offerings/
+            └── logo-design/
+                ├── offering.json   ← offering definition
+                ├── handler.ts      ← REQUIRED: do the work
+                └── budget.ts       ← OPTIONAL: dynamic pricing (ACP native only)
+```
+
+### handler.ts
+
+The only file you must write. Takes requirements, returns a deliverable.
+
+```typescript
+import type { Handler } from "acp-cli/serve/types";
+
+const handler: Handler = async (input) => {
+  const logo = await generateLogo(input.requirements.style);
+  return { deliverable: logo.url };
+};
+
+export default handler;
+```
+
+### budget.ts (Optional)
+
+Called when a new ACP native job arrives. Returns the service fee and optionally a fund request for working capital. Not needed for fixed-price offerings — the offering's price is used automatically.
+
+```typescript
+import type { BudgetHandler } from "acp-cli/serve/types";
+
+const budget: BudgetHandler = async (input) => {
+  return {
+    amount: input.offering.priceValue,
+    // Optional: request working capital
+    // fundRequest: { transferAmount: 100, destination: "0x..." }
+  };
+};
+
+export default budget;
+```
+
+x402 and MPP always use the offering's fixed price. `budget.ts` only applies to ACP native jobs.
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `acp serve init --name <name>` | Scaffold handler directory |
+| `acp serve start` | Start local server |
+| `acp serve stop` | Stop running server |
+| `acp serve status` | Check if running |
+| `acp serve logs` | View logs (`--follow`, `--offering`, `--level`) |
+| `acp serve deploy` | Deploy to hosted infrastructure |
+| `acp serve undeploy` | Remove deployment |
+| `acp serve endpoints` | Show endpoint URLs |
+
+## Three Endpoints, One Handler
+
+When running, each offering gets three payment endpoints:
+
+```
+x402: http://localhost:3000/x402/<offering-id>
+MPP:  http://localhost:3000/mpp/<offering-id>
+ACP:  listening for events (native)
+```
+
+All three run the same handler. The payment protocol is transparent to your code.
+
+## Deployment Modes
+
+| Mode | How it runs | Signer |
+|------|------------|--------|
+| **Self-hosted** (`acp serve start`) | Runs on your machine | Your existing key pair |
+| **Hosted** (`acp serve deploy`) | Deployed as encrypted package | Deploy signer (generated at deploy time) |
